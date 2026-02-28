@@ -61,7 +61,8 @@
   }
 
   // ── Scan Inbox ──
-  // Reads the visible conversation list from the sidebar
+  // Scrolls through the conversation list, accumulating chats as LinkedIn
+  // may virtualize the list (removing DOM elements that scroll out of view).
 
   async function scanInbox() {
     const listContainer = queryWithFallback(document, SEL.conversationList);
@@ -69,18 +70,79 @@
       return { error: 'Cannot find conversation list. Make sure you are on the messaging page.' };
     }
 
-    const items = queryAllWithFallback(listContainer, SEL.conversationItem);
-    if (items.length === 0) {
-      // Try broader search on entire document
-      const broadItems = queryAllWithFallback(document, SEL.conversationItem);
-      if (broadItems.length === 0) {
-        return { error: 'No conversations found in the list. Scroll to load some conversations first.' };
-      }
-      return { chats: broadItems.map(parseChatItem).filter(Boolean), platform: platformId };
+    // Accumulate chats while scrolling — LinkedIn virtualizes the list,
+    // so elements disappear from DOM as we scroll past them.
+    const chats = await scrollAndCollectChats(listContainer);
+
+    if (chats.length === 0) {
+      return { error: 'No conversations found in the list. Scroll to load some conversations first.' };
     }
 
-    const chats = items.map(parseChatItem).filter(Boolean);
     return { chats, platform: platformId };
+  }
+
+  async function scrollAndCollectChats(listContainer) {
+    const scrollContainer = queryWithFallback(document, SEL.conversationListScrollContainer)
+      || listContainer.closest('.msg-conversations-container')
+      || listContainer.parentElement;
+
+    // Collect whatever is visible right now
+    const collected = new Map(); // chatKey -> chat data
+    collectVisibleChats(listContainer, collected);
+
+    if (!scrollContainer) return Array.from(collected.values());
+
+    const maxAttempts = 100;
+    const scrollPause = 400;
+    const scrollStep = 300;
+    let attempts = 0;
+    let stableRounds = 0;
+    let lastCount = collected.size;
+
+    while (attempts < maxAttempts) {
+      // Scroll down incrementally
+      scrollContainer.scrollTop += scrollStep;
+      await sleep(scrollPause);
+
+      // Collect any new chats that appeared in the DOM
+      collectVisibleChats(listContainer, collected);
+
+      if (collected.size === lastCount) {
+        stableRounds++;
+        if (stableRounds >= 5) break;
+      } else {
+        stableRounds = 0;
+      }
+
+      lastCount = collected.size;
+      attempts++;
+    }
+
+    // Scroll back to top for a clean state
+    scrollContainer.scrollTop = 0;
+
+    return Array.from(collected.values());
+  }
+
+  function collectVisibleChats(listContainer, collected) {
+    const items = queryAllWithFallback(listContainer, SEL.conversationItem);
+    if (items.length === 0) {
+      // Fallback: broader search
+      const broadItems = queryAllWithFallback(document, SEL.conversationItem);
+      for (const el of broadItems) {
+        const chat = parseChatItem(el);
+        if (chat && !collected.has(chat.chatKey)) {
+          collected.set(chat.chatKey, chat);
+        }
+      }
+      return;
+    }
+    for (const el of items) {
+      const chat = parseChatItem(el);
+      if (chat && !collected.has(chat.chatKey)) {
+        collected.set(chat.chatKey, chat);
+      }
+    }
   }
 
   function parseChatItem(itemEl) {
