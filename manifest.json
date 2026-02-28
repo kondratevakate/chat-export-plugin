@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Chat Export",
   "version": "1.0.0",
-  "description": "Export messaging chats to CSV locally. Supports LinkedIn, Instagram, WhatsApp, Telegram. Privacy-first — no data leaves your browser.",
+  "description": "Export messaging chats to CSV locally. Supports LinkedIn, LinkedIn Sales Navigator, Instagram, WhatsApp, Telegram. Privacy-first — no data leaves your browser.",
   "permissions": [
     "activeTab",
     "sidePanel",
@@ -24,6 +24,11 @@
   "content_scripts": [
     {
       "matches": ["*://*.linkedin.com/messaging/*"],
+      "js": ["selectors.js", "content_script.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["*://*.linkedin.com/sales/inbox/*"],
       "js": ["selectors.js", "content_script.js"],
       "run_at": "document_idle"
     },

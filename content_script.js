@@ -96,7 +96,8 @@
       // Derive a stable chatKey from the link href or name
       let chatKey = '';
       if (linkEl?.href) {
-        const match = linkEl.href.match(/thread\/([^/?\s]+)/);
+        // Support both LinkedIn /messaging/thread/{id} and Sales Navigator /sales/inbox/{id}
+        const match = linkEl.href.match(/(?:thread|inbox)\/([^/?\s]+)/);
         chatKey = match ? match[1] : linkEl.href;
       }
       if (!chatKey) {
@@ -202,10 +203,14 @@
       }
     }
 
-    // Last resort: try navigating directly (LinkedIn supports direct thread URLs)
+    // Last resort: try navigating directly
     if (chatKey && !chatKey.startsWith('chat_')) {
       const currentUrl = location.href;
-      const base = location.origin + '/messaging/thread/' + chatKey + '/';
+      // Use the correct URL pattern for the current platform
+      const basePath = platformId === 'sales_navigator'
+        ? '/sales/inbox/' + chatKey + '/'
+        : '/messaging/thread/' + chatKey + '/';
+      const base = location.origin + basePath;
       if (!currentUrl.includes(chatKey)) {
         location.href = base;
         await sleep(2000);
@@ -258,11 +263,14 @@
 
   function getContactNameFromHeader() {
     // Try to get the contact name from the currently open chat header
+    // Selectors for both LinkedIn messaging and Sales Navigator
     const headerName = document.querySelector(
       '.msg-overlay-bubble-header__title, ' +
       '.msg-thread__link-to-profile, ' +
       '.msg-entity-lockup__entity-title, ' +
-      'h2.msg-overlay-bubble-header__title'
+      'h2.msg-overlay-bubble-header__title, ' +
+      // Sales Navigator: name from the active conversation detail area
+      '.artdeco-entity-lockup__title [data-anonymize="person-name"]'
     );
     return cleanText(headerName?.textContent);
   }

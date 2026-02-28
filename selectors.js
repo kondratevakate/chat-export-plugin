@@ -14,6 +14,13 @@
 /* global globalThis */
 
 const PLATFORMS = {
+  sales_navigator: {
+    id: 'sales_navigator',
+    label: 'Sales Navigator',
+    hostPatterns: ['*.linkedin.com'],
+    messagingPath: '/sales/inbox/',
+    csvPlatformName: 'Linkedin Sales Navigator',
+  },
   linkedin: {
     id: 'linkedin',
     label: 'LinkedIn',
@@ -45,6 +52,67 @@ const PLATFORMS = {
 };
 
 const PLATFORM_SELECTORS = {
+  // ── Sales Navigator ──
+  // Selectors derived from live DOM inspection of linkedin.com/sales/inbox/
+  sales_navigator: {
+    conversationList: {
+      primary: '[role="list"]',
+      fallback: 'ul.list-style-none',
+    },
+    conversationItem: {
+      primary: 'li.conversation-list-item',
+      fallback: 'li[class*="conversation-list-item"]',
+    },
+    conversationItemName: {
+      primary: '[data-anonymize="person-name"]',
+      fallback: '.artdeco-entity-lockup__title .t-bold',
+    },
+    conversationItemPreview: {
+      primary: '[data-anonymize="general-blurb"]',
+      fallback: '.conversation-list-item__main-content .t-black--light',
+    },
+    conversationItemTime: {
+      primary: 'time.conversation-list-item__timestamp',
+      fallback: '.conversation-list-item__timestamp',
+    },
+    conversationItemLink: {
+      primary: 'a.conversation-list-item__link',
+      fallback: 'a[href*="/sales/inbox/"]',
+    },
+    messageList: {
+      primary: '[role="list"]',
+      fallback: '.message-list-content',
+    },
+    messageItem: {
+      primary: '.message-item',
+      fallback: '[class*="message-item"]',
+    },
+    messageSenderName: {
+      primary: '[data-anonymize="person-name"]',
+      fallback: '.message-item__sender .t-bold',
+    },
+    messageBody: {
+      primary: '[data-anonymize="general-blurb"]',
+      fallback: '.message-item__body, .message-body',
+    },
+    messageTimestamp: {
+      primary: 'time.message-item__timestamp',
+      fallback: 'time',
+    },
+    messageGroup: {
+      primary: '.message-group',
+      fallback: '[class*="message-group"]',
+    },
+    messageGroupMeta: {
+      primary: '.message-group__meta',
+      fallback: '.message-group__sender-info',
+    },
+    messageScrollContainer: {
+      primary: '.message-list-container',
+      fallback: '[class*="message-list"]',
+    },
+  },
+
   // ── LinkedIn ──
   linkedin: {
     conversationList: {
@@ -162,14 +230,17 @@ const PLATFORM_SELECTORS = {
 
 /**
  * Detect the current platform from the page URL.
+ * Checks both hostname AND path to distinguish platforms sharing a host
+ * (e.g. LinkedIn messaging vs Sales Navigator inbox).
  * @returns {string|null} Platform id or null
  */
 function detectPlatform() {
   const host = location.hostname;
+  const path = location.pathname;
   for (const [id, platform] of Object.entries(PLATFORMS)) {
     for (const pattern of platform.hostPatterns) {
       const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
-      if (regex.test(host)) return id;
+      if (regex.test(host) && path.startsWith(platform.messagingPath)) return id;
     }
   }
   return null;
