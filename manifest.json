@@ -28,6 +28,11 @@
       "run_at": "document_idle"
     },
     {
+      "matches": ["*://*.linkedin.com/sales/inbox/*"],
+      "js": ["selectors.js", "content_script.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["*://*.instagram.com/direct/*"],
       "js": ["selectors.js", "content_script.js"],
       "run_at": "document_idle"

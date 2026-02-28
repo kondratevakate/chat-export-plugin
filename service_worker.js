@@ -99,24 +99,36 @@ async function handleMessage(message, sender) {
 // ── Content Script Communication ──
 
 async function getLinkedInTab() {
-  const tabs = await chrome.tabs.query({ url: '*://*.linkedin.com/messaging/*', active: true });
-  if (tabs.length > 0) {
-    currentTabId = tabs[0].id;
-    return tabs[0];
+  // Try active tab first (messaging or Sales Navigator)
+  const urlPatterns = [
+    '*://*.linkedin.com/messaging/*',
+    '*://*.linkedin.com/sales/inbox/*',
+  ];
+
+  for (const url of urlPatterns) {
+    const tabs = await chrome.tabs.query({ url, active: true });
+    if (tabs.length > 0) {
+      currentTabId = tabs[0].id;
+      return tabs[0];
+    }
   }
-  // Try any LinkedIn messaging tab
-  const allTabs = await chrome.tabs.query({ url: '*://*.linkedin.com/messaging/*' });
-  if (allTabs.length > 0) {
-    currentTabId = allTabs[0].id;
-    return allTabs[0];
+
+  // Try any matching tab
+  for (const url of urlPatterns) {
+    const allTabs = await chrome.tabs.query({ url });
+    if (allTabs.length > 0) {
+      currentTabId = allTabs[0].id;
+      return allTabs[0];
+    }
   }
+
   return null;
 }
 
 async function forwardToContentScript(action, payload) {
   const tab = await getLinkedInTab();
   if (!tab) {
-    return { error: 'No LinkedIn Messaging tab found. Please open linkedin.com/messaging/' };
+    return { error: 'No LinkedIn tab found. Open linkedin.com/messaging/ or Sales Navigator inbox.' };
   }
 
   try {
