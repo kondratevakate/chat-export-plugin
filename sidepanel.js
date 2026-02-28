@@ -445,7 +445,8 @@ function updateProgress(data) {
     if (hasProcessedData) {
       setStatus(`${msgCount} messages ready. Choose format and click Download.`, 'success');
     } else {
-      setStatus('0 messages extracted. Check that Sender Name in Settings matches your LinkedIn name. Also try refreshing the LinkedIn page.', 'error');
+      setStatus('0 messages extracted. Running diagnostics...', 'error');
+      runAndShowDiagnostics();
     }
   } else if (data.status === 'cancelled') {
     els.progressText.textContent = 'Cancelled';
@@ -482,6 +483,46 @@ function updateButtonStates() {
 function setStatus(text, type = '') {
   els.statusBar.textContent = text;
   els.statusBar.className = 'status-bar' + (type ? ' ' + type : '');
+}
+
+// ── Diagnostics ──
+
+async function runAndShowDiagnostics() {
+  const result = await sendMessage('diagnose');
+  if (result.error) {
+    appendProgressDetail(`Diagnostics failed: ${result.error}`, 'error');
+    return;
+  }
+
+  appendProgressDetail('--- DOM Diagnostics ---', '');
+  appendProgressDetail(`Platform: ${result.platform} | URL: ${result.url}`, '');
+
+  // Show selector matches
+  if (result.selectors) {
+    for (const [key, info] of Object.entries(result.selectors)) {
+      appendProgressDetail(`  ${key}: ${info.primary} / ${info.fallback}`, '');
+    }
+  }
+
+  // Show found CSS classes
+  if (result.msgClasses && result.msgClasses.length > 0) {
+    appendProgressDetail(`msg-classes: ${result.msgClasses.join(', ')}`, '');
+  }
+  if (result.messageClasses && result.messageClasses.length > 0) {
+    appendProgressDetail(`message-classes: ${result.messageClasses.join(', ')}`, '');
+  }
+
+  // Show sample HTML
+  if (result.sampleHTML) {
+    appendProgressDetail('--- Sample DOM ---', '');
+    // Split long text into lines for readability
+    const lines = result.sampleHTML.split('\n').slice(0, 30);
+    for (const line of lines) {
+      appendProgressDetail(line, '');
+    }
+  }
+
+  setStatus('0 messages. Diagnostics shown in progress panel. Share screenshot with developer.', 'error');
 }
 
 // ── Messaging ──

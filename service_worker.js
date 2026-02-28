@@ -47,6 +47,9 @@ async function handleMessage(message, sender) {
     case 'scanInbox':
       return forwardToContentScript('scanInbox', payload);
 
+    case 'diagnose':
+      return forwardToContentScript('diagnose', payload);
+
     case 'processQueue':
       return startProcessing(payload);
 

@@ -62,6 +62,8 @@
         return scanInbox();
       case 'extractChat':
         return extractChat(payload.chatKey, payload.settings);
+      case 'diagnose':
+        return runDiagnostics();
       default:
         return { error: `Unknown action: ${action}` };
     }
@@ -297,6 +299,7 @@
 
     // Strategy 1: Collect from message groups (LinkedIn groups sequential messages)
     const groups = queryAllWithFallback(document, SEL.messageGroup);
+    console.log(`[ChatExport] Strategy 1 — message groups: ${groups.length} (selector: ${SEL.messageGroup.primary})`);
 
     if (groups.length > 0) {
       for (const group of groups) {
@@ -328,6 +331,18 @@
     // Strategy 2: Flat message items (fallback, and primary for Sales Navigator)
     if (messages.length === 0) {
       const items = queryAllWithFallback(document, SEL.messageItem);
+      console.log(`[ChatExport] Strategy 2 — flat items: ${items.length} (selector: ${SEL.messageItem.primary})`);
+
+      // Debug: check raw existence of key elements
+      const rawDataX = document.querySelectorAll('[data-x-message-content]');
+      const rawDataXMsg = document.querySelectorAll('[data-x-message-content="message"]');
+      console.log(`[ChatExport] Raw [data-x-message-content]: ${rawDataX.length}, [data-x-message-content="message"]: ${rawDataXMsg.length}`);
+      if (rawDataX.length > 0 && rawDataXMsg.length === 0) {
+        // The attribute value changed — log what we see
+        const sampleValues = [...rawDataX].slice(0, 5).map(el => el.getAttribute('data-x-message-content'));
+        console.log(`[ChatExport] data-x-message-content values:`, sampleValues);
+      }
+
       for (const item of items) {
         const nameEl = queryWithFallback(item, SEL.messageSenderName);
         const bodyEl = queryWithFallback(item, SEL.messageBody);
@@ -352,8 +367,36 @@
           chatKey,
         });
       }
+
+      // Strategy 3: Direct fallback using [data-x-message-content] if selectors missed
+      if (messages.length === 0 && rawDataX.length > 0) {
+        console.log(`[ChatExport] Strategy 3 — direct data-x-message-content fallback`);
+        for (const el of rawDataX) {
+          const text = cleanText(el.textContent);
+          if (!text) continue;
+
+          // Walk up to find the containing list item
+          const li = el.closest('li') || el.closest('article') || el.parentElement;
+          const nameEl = li?.querySelector('address') || li?.querySelector('[data-anonymize="person-name"]');
+          const timeEl = li?.querySelector('time[datetime]') || li?.querySelector('time');
+          const sender = cleanText(nameEl?.textContent) || '';
+          const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
+
+          const isMine = !sender || isSenderMatch(sender, senderName);
+          messages.push({
+            platform: platform.csvPlatformName,
+            messageDateRaw: timestamp,
+            sender: isMine ? senderName : sender || contactName,
+            receiver: isMine ? contactName : senderName,
+            text,
+            chatKey,
+          });
+        }
+        console.log(`[ChatExport] Strategy 3 found: ${messages.length} messages`);
+      }
     }
 
+    console.log(`[ChatExport] collectMessages total: ${messages.length} (sender: "${senderName}", contact: "${contactName}")`);
     return messages;
   }
 
@@ -377,6 +420,94 @@
   function cleanText(str) {
     if (!str) return '';
     return str.replace(/\s+/g, ' ').trim();
+  }
+
+  // ── Diagnostics ──
+  // Returns info about what the content script can see in the DOM
+
+  function runDiagnostics() {
+    const results = {
+      platform: platformId,
+      url: location.href,
+      selectors: {},
+      sampleHTML: '',
+    };
+
+    // Check every selector in SEL and report how many elements match
+    for (const [key, pair] of Object.entries(SEL)) {
+      const primaryCount = document.querySelectorAll(pair.primary).length;
+      const fallbackCount = pair.fallback ? document.querySelectorAll(pair.fallback).length : 0;
+      results.selectors[key] = {
+        primary: `${pair.primary} → ${primaryCount}`,
+        fallback: `${pair.fallback || '(none)'} → ${fallbackCount}`,
+      };
+    }
+
+    // Find all CSS classes containing "msg" or "message" in the main content area
+    const mainArea = document.querySelector('[role="main"]') || document.body;
+    const allElements = mainArea.querySelectorAll('*');
+    const msgClasses = new Set();
+    const messageClasses = new Set();
+    for (const el of allElements) {
+      if (!el.className || typeof el.className !== 'string') continue;
+      for (const cls of el.className.split(/\s+/)) {
+        if (cls.includes('msg-') || cls.includes('msg_')) msgClasses.add(cls);
+        if (cls.includes('message')) messageClasses.add(cls);
+      }
+    }
+    results.msgClasses = [...msgClasses].sort().slice(0, 50);
+    results.messageClasses = [...messageClasses].sort().slice(0, 50);
+
+    // Sample HTML: the first message-like container we can find
+    const sampleSources = [
+      '.msg-s-message-list-content',
+      '.msg-s-message-group',
+      '.msg-s-event-listitem',
+      '[data-x-message-content]',
+      '[role="main"] [role="list"]',
+      '[role="main"] ul',
+    ];
+    for (const sel of sampleSources) {
+      const el = document.querySelector(sel);
+      if (el) {
+        // Get first child or self, trimmed
+        const sample = el.outerHTML.slice(0, 1500);
+        results.sampleHTML = `Matched: ${sel}\n` + sample;
+        break;
+      }
+    }
+
+    // If nothing found, grab some structure from [role="main"]
+    if (!results.sampleHTML) {
+      const main = document.querySelector('[role="main"]');
+      if (main) {
+        // Show tag structure of first 3 levels
+        const structure = describeElement(main, 3);
+        results.sampleHTML = 'No message selectors matched. [role="main"] structure:\n' + structure;
+      } else {
+        results.sampleHTML = 'No [role="main"] element found on page.';
+      }
+    }
+
+    return results;
+  }
+
+  function describeElement(el, depth, indent = '') {
+    if (depth <= 0 || !el) return '';
+    const tag = el.tagName?.toLowerCase() || '?';
+    const cls = el.className && typeof el.className === 'string' ? '.' + el.className.trim().split(/\s+/).join('.') : '';
+    const role = el.getAttribute?.('role') ? `[role="${el.getAttribute('role')}"]` : '';
+    const id = el.id ? `#${el.id}` : '';
+    let line = `${indent}<${tag}${id}${cls}${role}> (${el.children?.length || 0} children)\n`;
+    if (el.children) {
+      for (let i = 0; i < Math.min(el.children.length, 8); i++) {
+        line += describeElement(el.children[i], depth - 1, indent + '  ');
+      }
+      if (el.children.length > 8) {
+        line += `${indent}  ... and ${el.children.length - 8} more\n`;
+      }
+    }
+    return line;
   }
 
   function sleep(ms) {
