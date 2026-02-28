@@ -212,21 +212,9 @@
       }
     }
 
-    // Last resort: try navigating directly
-    if (chatKey && !chatKey.startsWith('chat_')) {
-      const currentUrl = location.href;
-      // Use the correct URL pattern for the current platform
-      const basePath = platformId === 'sales_navigator'
-        ? '/sales/inbox/' + chatKey + '/'
-        : '/messaging/thread/' + chatKey + '/';
-      const base = location.origin + basePath;
-      if (!currentUrl.includes(chatKey)) {
-        location.href = base;
-        await sleep(2000);
-        return true;
-      }
-    }
-
+    // Do NOT use location.href navigation — it destroys the content script
+    // and breaks all subsequent chat processing. Just skip this chat.
+    console.warn(`[ChatExport] Could not find chat ${chatKey} in conversation list. Skipping.`);
     return false;
   }
 

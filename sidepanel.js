@@ -39,6 +39,7 @@ const els = {
   messagesPerChat: $('#messagesPerChat'),
   rowMode: $('#rowMode'),
   redactPII: $('#redactPII'),
+  btnCancel: $('#btnCancel'),
   btnSaveSettings: $('#btnSaveSettings'),
   btnClearData: $('#btnClearData'),
 };
@@ -124,6 +125,7 @@ function bindEvents() {
   // Actions
   els.btnScan.addEventListener('click', onScanInbox);
   els.btnProcess.addEventListener('click', onProcessQueue);
+  els.btnCancel.addEventListener('click', onCancel);
   els.btnDownload.addEventListener('click', onDownload);
 
   // Settings
@@ -345,11 +347,12 @@ async function onProcessQueue() {
     return;
   }
 
-  // Show progress
+  // Show progress and cancel button
   els.progressPanel.classList.remove('hidden');
   els.progressDetails.innerHTML = '';
   els.btnProcess.disabled = true;
-  els.btnProcess.textContent = 'Processing...';
+  els.btnProcess.classList.add('hidden');
+  els.btnCancel.classList.remove('hidden');
 
   const result = await sendMessage('processQueue', {
     selectedChatKeys: queue,
@@ -366,6 +369,15 @@ async function onProcessQueue() {
   }
 
   setStatus(`Processing ${result.queueLength} chats... Please wait.`);
+}
+
+async function onCancel() {
+  await sendMessage('cancelProcessing');
+  els.btnCancel.classList.add('hidden');
+  els.btnProcess.classList.remove('hidden');
+  els.btnProcess.disabled = false;
+  els.btnProcess.textContent = 'Process Selected Chats';
+  setStatus('Processing cancelled.', 'error');
 }
 
 async function onDownload() {
@@ -437,6 +449,8 @@ function updateProgress(data) {
   } else if (data.status === 'done') {
     els.progressFill.style.width = '100%';
     els.progressText.textContent = `Done! Chats: ${data.processed}/${data.total} | Messages: ${msgCount} | Failed: ${data.failures}`;
+    els.btnCancel.classList.add('hidden');
+    els.btnProcess.classList.remove('hidden');
     els.btnProcess.disabled = false;
     els.btnProcess.textContent = 'Process Selected Chats';
     hasProcessedData = msgCount > 0;
@@ -450,6 +464,8 @@ function updateProgress(data) {
     }
   } else if (data.status === 'cancelled') {
     els.progressText.textContent = 'Cancelled';
+    els.btnCancel.classList.add('hidden');
+    els.btnProcess.classList.remove('hidden');
     els.btnProcess.disabled = false;
     els.btnProcess.textContent = 'Process Selected Chats';
   }

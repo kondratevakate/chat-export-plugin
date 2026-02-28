@@ -195,6 +195,20 @@ async function processQueue(queue, settings) {
       if (result.error) {
         console.warn(`[SW] Chat ${chatKey}: error —`, result.error);
         runState.failures.push({ chatKey, reason: result.error });
+
+        // If content script disconnected, stop — all further chats will fail too
+        if (result.error.includes('not responding') || result.error.includes('does not exist') || result.error.includes('Could not establish')) {
+          console.error('[SW] Content script lost. Stopping processing.');
+          isProcessing = false;
+          broadcastProgress({
+            status: 'done',
+            processed: runState.processedChatKeys.length,
+            total: queue.length,
+            failures: runState.failures.length,
+            messageCount: extractedMessages.length,
+          });
+          return;
+        }
       } else if (result.messages) {
         // Apply date filters
         const filtered = filterMessages(result.messages, settings);
