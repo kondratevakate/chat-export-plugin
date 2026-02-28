@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkedIn Chat Export</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Header -->
+    <header class="header">
+      <div class="tabs">
+        <button class="tab active" data-tab="chats">Chats</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </div>
+    </header>
+
+    <!-- Chats Tab -->
+    <section id="tab-chats" class="tab-content active">
+
+      <!-- Select Chat -->
+      <div class="section">
+        <label class="label">Select Chat:</label>
+        <div class="chat-selector">
+          <input
+            type="text"
+            id="chatSearch"
+            placeholder="Search scanned chats..."
+            autocomplete="off"
+          />
+          <div id="suggestions" class="suggestions hidden"></div>
+        </div>
+        <div id="selectedChats" class="chip-list"></div>
+      </div>
+
+      <!-- Mode Toggle -->
+      <div class="section row">
+        <label class="label small">Mode:</label>
+        <label class="radio-label">
+          <input type="radio" name="mode" value="selected" checked /> Selected only
+        </label>
+        <label class="radio-label">
+          <input type="radio" name="mode" value="exclude" /> All except excluded
+        </label>
+      </div>
+
+      <!-- Excluded (shown only in exclude mode) -->
+      <div id="excludeSection" class="section hidden">
+        <label class="label">Excluded:</label>
+        <div id="excludedChats" class="chip-list"></div>
+      </div>
+
+      <!-- Date Filters -->
+      <div class="section">
+        <div class="date-row">
+          <div class="date-field">
+            <label class="label small">From</label>
+            <input type="date" id="dateFrom" value="2001-01-01" />
+          </div>
+          <div class="date-field">
+            <label class="label small">To</label>
+            <input type="date" id="dateTo" />
+          </div>
+        </div>
+      </div>
+
+      <!-- Export Format -->
+      <div class="section">
+        <label class="label small">Export</label>
+        <select id="exportFormat">
+          <option value="csv">Chats in CSV</option>
+          <option value="csv_anon">Chats in CSV (anonymized)</option>
+          <option value="tsv">Chats in TSV</option>
+        </select>
+      </div>
+
+      <!-- Actions -->
+      <div class="section actions">
+        <button id="btnScan" class="btn btn-secondary">Scan Inbox</button>
+        <button id="btnDownload" class="btn btn-primary">Download</button>
+      </div>
+
+      <div class="section actions-row">
+        <button id="btnProcess" class="btn btn-secondary full-width">Process Selected Chats</button>
+      </div>
+
+      <!-- Progress -->
+      <div id="progressPanel" class="section hidden">
+        <label class="label">Progress:</label>
+        <div id="progressBar" class="progress-bar">
+          <div id="progressFill" class="progress-fill"></div>
+        </div>
+        <div id="progressText" class="progress-text"></div>
+        <div id="progressDetails" class="progress-details"></div>
+      </div>
+
+      <!-- Status -->
+      <div id="statusBar" class="status-bar"></div>
+
+    </section>
+
+    <!-- Settings Tab -->
+    <section id="tab-settings" class="tab-content">
+      <div class="section">
+        <label class="label">Sender Name</label>
+        <input type="text" id="senderName" value="Kate Kondrateva" />
+      </div>
+      <div class="section">
+        <label class="label">Messages per chat (N)</label>
+        <input type="number" id="messagesPerChat" value="8" min="1" max="100" />
+      </div>
+      <div class="section">
+        <label class="label">Row mode</label>
+        <select id="rowMode">
+          <option value="message">One row per message</option>
+          <option value="conversation">One row per conversation</option>
+        </select>
+      </div>
+      <div class="section">
+        <label class="label">
+          <input type="checkbox" id="redactPII" checked />
+          Redact PII in anonymized export (emails, phones, URLs)
+        </label>
+      </div>
+      <div class="section">
+        <button id="btnSaveSettings" class="btn btn-secondary full-width">Save Settings</button>
+      </div>
+      <div class="section">
+        <button id="btnClearData" class="btn btn-danger full-width">Clear All Data</button>
+      </div>
+    </section>
+  </div>
+
+  <script src="utils/anonymize.js"></script>
+  <script src="utils/csv.js"></script>
+  <script src="utils/redact.js"></script>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
