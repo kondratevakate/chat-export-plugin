@@ -14,10 +14,12 @@
 
   // ── Platform Detection ──
   const platformId = detectPlatform();
+  console.log('[ChatExport] Platform detected:', platformId, '| URL:', location.href);
   if (!platformId) return; // Not on a supported platform
 
   const platform = PLATFORMS[platformId];
   const SEL = getSelectors(platformId);
+  console.log('[ChatExport] Content script loaded for', platform.label);
 
   // ── Extraction States ──
   const State = {
@@ -41,7 +43,12 @@
 
   // ── Message Listener ──
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    handleMessage(message).then(sendResponse).catch(err => {
+    console.log('[ChatExport] Received message:', message.action);
+    handleMessage(message).then(result => {
+      console.log('[ChatExport] Response for', message.action, ':', result.error || `OK (${result.chats?.length || result.messages?.length || 0} items)`);
+      sendResponse(result);
+    }).catch(err => {
+      console.error('[ChatExport] Error in', message.action, ':', err);
       sendResponse({ error: err.message });
     });
     return true;

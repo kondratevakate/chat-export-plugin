@@ -98,32 +98,48 @@ async function handleMessage(message, sender) {
 
 // ── Content Script Communication ──
 
-async function getLinkedInTab() {
-  const tabs = await chrome.tabs.query({ url: '*://*.linkedin.com/messaging/*', active: true });
-  if (tabs.length > 0) {
-    currentTabId = tabs[0].id;
-    return tabs[0];
+// All URL patterns where content scripts are injected (must match manifest.json)
+const CONTENT_SCRIPT_PATTERNS = [
+  '*://*.linkedin.com/messaging/*',
+  '*://*.linkedin.com/sales/inbox/*',
+  '*://*.instagram.com/direct/*',
+  '*://web.whatsapp.com/*',
+  '*://web.telegram.org/*',
+];
+
+async function getActiveTab() {
+  // Try active tabs first, then any matching tab
+  for (const pattern of CONTENT_SCRIPT_PATTERNS) {
+    const tabs = await chrome.tabs.query({ url: pattern, active: true });
+    if (tabs.length > 0) {
+      currentTabId = tabs[0].id;
+      return tabs[0];
+    }
   }
-  // Try any LinkedIn messaging tab
-  const allTabs = await chrome.tabs.query({ url: '*://*.linkedin.com/messaging/*' });
-  if (allTabs.length > 0) {
-    currentTabId = allTabs[0].id;
-    return allTabs[0];
+  for (const pattern of CONTENT_SCRIPT_PATTERNS) {
+    const tabs = await chrome.tabs.query({ url: pattern });
+    if (tabs.length > 0) {
+      currentTabId = tabs[0].id;
+      return tabs[0];
+    }
   }
   return null;
 }
 
 async function forwardToContentScript(action, payload) {
-  const tab = await getLinkedInTab();
+  const tab = await getActiveTab();
   if (!tab) {
-    return { error: 'No LinkedIn Messaging tab found. Please open linkedin.com/messaging/' };
+    return { error: 'No supported messaging tab found. Open LinkedIn Messaging, Sales Navigator Inbox, Instagram DMs, WhatsApp Web, or Telegram Web.' };
   }
+
+  console.log(`[SW] Forwarding "${action}" to tab ${tab.id} (${tab.url})`);
 
   try {
     const response = await chrome.tabs.sendMessage(tab.id, { action, payload });
     return response;
   } catch (err) {
-    return { error: `Content script not responding: ${err.message}. Try refreshing the LinkedIn page.` };
+    console.error(`[SW] Failed to reach content script on tab ${tab.id}:`, err);
+    return { error: `Content script not responding: ${err.message}. Try refreshing the page.` };
   }
 }
 
