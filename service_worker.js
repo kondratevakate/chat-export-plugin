@@ -142,8 +142,21 @@ async function forwardToContentScript(action, payload) {
     const response = await chrome.tabs.sendMessage(tab.id, { action, payload });
     return response;
   } catch (err) {
-    console.error(`[SW] Failed to reach content script on tab ${tab.id}:`, err);
-    return { error: `Content script not responding: ${err.message}. Try refreshing the page.` };
+    // Content script not loaded — try to inject it automatically
+    console.warn(`[SW] Content script not responding on tab ${tab.id}, injecting...`);
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        files: ['selectors.js', 'content_script.js'],
+      });
+      // Wait for script to initialize
+      await sleep(500);
+      const response = await chrome.tabs.sendMessage(tab.id, { action, payload });
+      return response;
+    } catch (injectErr) {
+      console.error(`[SW] Failed to inject content script:`, injectErr);
+      return { error: `Content script not responding. Try refreshing the page.` };
+    }
   }
 }
 

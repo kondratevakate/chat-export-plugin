@@ -78,6 +78,37 @@
       return { error: 'Cannot find conversation list. Make sure you are on the messaging page.' };
     }
 
+    // Auto-scroll the conversation list to load more chats (LinkedIn lazy-loads ~20 at a time)
+    const scrollTarget = listContainer.closest('[style*="overflow"]')
+      || listContainer.parentElement
+      || listContainer;
+
+    let prevCount = 0;
+    let stableRounds = 0;
+    const maxScrollAttempts = 30;
+
+    for (let i = 0; i < maxScrollAttempts; i++) {
+      const currentItems = queryAllWithFallback(listContainer, SEL.conversationItem);
+      const currentCount = currentItems.length;
+      console.log(`[ChatExport] Scan scroll #${i}: ${currentCount} conversations loaded`);
+
+      if (currentCount === prevCount) {
+        stableRounds++;
+        if (stableRounds >= 3) break; // No new items after 3 scroll attempts
+      } else {
+        stableRounds = 0;
+      }
+      prevCount = currentCount;
+
+      // Scroll the conversation list down
+      scrollTarget.scrollTop = scrollTarget.scrollHeight;
+      // Also try scrolling the last item into view
+      if (currentItems.length > 0) {
+        currentItems[currentItems.length - 1].scrollIntoView({ block: 'end' });
+      }
+      await sleep(800);
+    }
+
     const items = queryAllWithFallback(listContainer, SEL.conversationItem);
     if (items.length === 0) {
       // Try broader search on entire document
@@ -89,6 +120,7 @@
     }
 
     const chats = items.map(parseChatItem).filter(Boolean);
+    console.log(`[ChatExport] Scan complete: ${chats.length} chats found`);
     return { chats, platform: platformId };
   }
 
