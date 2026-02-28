@@ -82,6 +82,7 @@ async function handleMessage(message, sender) {
         processedChatKeys: [],
         failures: [],
       };
+      await chrome.storage.local.remove(['extractedMessages']);
       return { ok: true };
 
     // ── From Content Script ──
@@ -179,6 +180,7 @@ async function processQueue(queue, settings) {
       processed: runState.processedChatKeys.length,
       total: queue.length,
       failures: runState.failures.length,
+      messageCount: extractedMessages.length,
     });
 
     try {
@@ -188,12 +190,14 @@ async function processQueue(queue, settings) {
       });
 
       if (result.error) {
+        console.warn(`[SW] Chat ${chatKey}: error —`, result.error);
         runState.failures.push({ chatKey, reason: result.error });
       } else if (result.messages) {
         // Apply date filters
         const filtered = filterMessages(result.messages, settings);
         extractedMessages.push(...filtered);
         runState.processedChatKeys.push(chatKey);
+        console.log(`[SW] Chat ${chatKey}: ${result.total || 0} found, ${result.collected || 0} sender msgs, ${filtered.length} after filter`);
       }
     } catch (err) {
       runState.failures.push({ chatKey, reason: err.message });
@@ -206,11 +210,17 @@ async function processQueue(queue, settings) {
   }
 
   isProcessing = false;
+
+  // Persist to storage so data survives service worker restart
+  await chrome.storage.local.set({ extractedMessages });
+  console.log(`[SW] Processing done. Total messages: ${extractedMessages.length}`);
+
   broadcastProgress({
     status: 'done',
     processed: runState.processedChatKeys.length,
     total: queue.length,
     failures: runState.failures.length,
+    messageCount: extractedMessages.length,
   });
 }
 
@@ -244,6 +254,15 @@ function broadcastProgress(data) {
 // ── Export ──
 
 async function exportToFile(anonymize) {
+  // Restore from storage if service worker restarted and lost in-memory data
+  if (extractedMessages.length === 0) {
+    const stored = await chrome.storage.local.get(['extractedMessages']);
+    if (stored.extractedMessages && stored.extractedMessages.length > 0) {
+      extractedMessages = stored.extractedMessages;
+      console.log(`[SW] Restored ${extractedMessages.length} messages from storage`);
+    }
+  }
+
   if (extractedMessages.length === 0) {
     return { error: 'No messages to export. Process some chats first.' };
   }

@@ -425,25 +425,27 @@ function gatherSettings() {
 function updateProgress(data) {
   els.progressPanel.classList.remove('hidden');
 
+  const msgCount = data.messageCount || 0;
+
   if (data.status === 'processing') {
     const pct = data.total > 0 ? Math.round((data.processed / data.total) * 100) : 0;
     els.progressFill.style.width = pct + '%';
-    els.progressText.textContent = `Processing: ${data.processed}/${data.total} | Failed: ${data.failures}`;
+    els.progressText.textContent = `Chats: ${data.processed}/${data.total} | Messages: ${msgCount} | Failed: ${data.failures}`;
 
     const chatName = findChatName(data.current);
     appendProgressDetail(`Processing: ${chatName}...`, '');
   } else if (data.status === 'done') {
     els.progressFill.style.width = '100%';
-    els.progressText.textContent = `Done! Processed: ${data.processed}/${data.total} | Failed: ${data.failures}`;
+    els.progressText.textContent = `Done! Chats: ${data.processed}/${data.total} | Messages: ${msgCount} | Failed: ${data.failures}`;
     els.btnProcess.disabled = false;
     els.btnProcess.textContent = 'Process Selected Chats';
-    hasProcessedData = data.processed > 0;
+    hasProcessedData = msgCount > 0;
     els.btnDownload.disabled = !hasProcessedData;
     updateStepHighlight();
     if (hasProcessedData) {
-      setStatus(`Processing complete! Choose format and click Download.`, 'success');
+      setStatus(`${msgCount} messages ready. Choose format and click Download.`, 'success');
     } else {
-      setStatus('No messages extracted. Try selecting different chats.', 'error');
+      setStatus('0 messages extracted. Check that Sender Name in Settings matches your LinkedIn name. Also try refreshing the LinkedIn page.', 'error');
     }
   } else if (data.status === 'cancelled') {
     els.progressText.textContent = 'Cancelled';
