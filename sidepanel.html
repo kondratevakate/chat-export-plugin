@@ -19,40 +19,58 @@
     <!-- Chats Tab -->
     <section id="tab-chats" class="tab-content active">
 
-      <!-- Select Chat -->
-      <div class="section">
-        <label class="label">Select Chat:</label>
+      <!-- Step 1: Scan -->
+      <div class="section step-section">
+        <div class="step-header">
+          <span class="step-num" id="stepNum1">1</span>
+          <label class="label step-label">Open messaging page & scan</label>
+        </div>
+        <button id="btnScan" class="btn btn-primary full-width">Scan Inbox</button>
+        <div id="scanHint" class="hint">Open LinkedIn Messaging or Sales Navigator Inbox, then click Scan.</div>
+      </div>
+
+      <!-- Step 2: Select Chats -->
+      <div class="section step-section" id="step2Section">
+        <div class="step-header">
+          <span class="step-num" id="stepNum2">2</span>
+          <label class="label step-label">Select chats</label>
+        </div>
         <div class="chat-selector">
           <input
             type="text"
             id="chatSearch"
             placeholder="Search scanned chats..."
             autocomplete="off"
+            disabled
           />
           <div id="suggestions" class="suggestions hidden"></div>
         </div>
         <div id="selectedChats" class="chip-list"></div>
+
+        <!-- Mode Toggle -->
+        <div class="row mode-row">
+          <label class="label small">Mode:</label>
+          <label class="radio-label">
+            <input type="radio" name="mode" value="selected" checked /> Selected only
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="mode" value="exclude" /> All except excluded
+          </label>
+        </div>
+
+        <!-- Excluded (shown only in exclude mode) -->
+        <div id="excludeSection" class="hidden">
+          <label class="label">Excluded:</label>
+          <div id="excludedChats" class="chip-list"></div>
+        </div>
       </div>
 
-      <!-- Mode Toggle -->
-      <div class="section row">
-        <label class="label small">Mode:</label>
-        <label class="radio-label">
-          <input type="radio" name="mode" value="selected" checked /> Selected only
-        </label>
-        <label class="radio-label">
-          <input type="radio" name="mode" value="exclude" /> All except excluded
-        </label>
-      </div>
-
-      <!-- Excluded (shown only in exclude mode) -->
-      <div id="excludeSection" class="section hidden">
-        <label class="label">Excluded:</label>
-        <div id="excludedChats" class="chip-list"></div>
-      </div>
-
-      <!-- Date Filters -->
-      <div class="section">
+      <!-- Step 3: Configure & Process -->
+      <div class="section step-section">
+        <div class="step-header">
+          <span class="step-num" id="stepNum3">3</span>
+          <label class="label step-label">Configure & process</label>
+        </div>
         <div class="date-row">
           <div class="date-field">
             <label class="label small">From</label>
@@ -63,31 +81,11 @@
             <input type="date" id="dateTo" />
           </div>
         </div>
-      </div>
-
-      <!-- Export Format -->
-      <div class="section">
-        <label class="label small">Export</label>
-        <select id="exportFormat">
-          <option value="csv">Chats in CSV</option>
-          <option value="csv_anon">Chats in CSV (anonymized)</option>
-          <option value="tsv">Chats in TSV</option>
-        </select>
-      </div>
-
-      <!-- Actions -->
-      <div class="section actions">
-        <button id="btnScan" class="btn btn-secondary">Scan Inbox</button>
-        <button id="btnDownload" class="btn btn-primary">Download</button>
-      </div>
-
-      <div class="section actions-row">
-        <button id="btnProcess" class="btn btn-secondary full-width">Process Selected Chats</button>
+        <button id="btnProcess" class="btn btn-secondary full-width" disabled>Process Selected Chats</button>
       </div>
 
       <!-- Progress -->
       <div id="progressPanel" class="section hidden">
-        <label class="label">Progress:</label>
         <div id="progressBar" class="progress-bar">
           <div id="progressFill" class="progress-fill"></div>
         </div>
@@ -95,8 +93,22 @@
         <div id="progressDetails" class="progress-details"></div>
       </div>
 
+      <!-- Step 4: Download -->
+      <div class="section step-section">
+        <div class="step-header">
+          <span class="step-num" id="stepNum4">4</span>
+          <label class="label step-label">Download</label>
+        </div>
+        <select id="exportFormat">
+          <option value="csv">Chats in CSV</option>
+          <option value="csv_anon">Chats in CSV (anonymized)</option>
+          <option value="tsv">Chats in TSV</option>
+        </select>
+        <button id="btnDownload" class="btn btn-primary full-width" disabled>Download</button>
+      </div>
+
       <!-- Status -->
-      <div id="statusBar" class="status-bar"></div>
+      <div id="statusBar" class="status-bar">Ready. Start by scanning your inbox.</div>
 
     </section>
 

@@ -330,6 +330,76 @@ select:focus {
   color: #2bb44e;
 }
 
+/* ── Step Sections ── */
+.step-section {
+  border-left: 3px solid #e0e0e0;
+  padding-left: 12px;
+  position: relative;
+}
+
+.step-section.active-step {
+  border-left-color: #0a66c2;
+}
+
+.step-section.done-step {
+  border-left-color: #2bb44e;
+}
+
+.step-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #e0e0e0;
+  color: #666;
+  font-size: 12px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.active-step .step-num {
+  background: #0a66c2;
+  color: #fff;
+}
+
+.done-step .step-num {
+  background: #2bb44e;
+  color: #fff;
+}
+
+.step-label {
+  display: inline !important;
+  margin-bottom: 0 !important;
+}
+
+.hint {
+  font-size: 11px;
+  color: #888;
+  margin-top: 6px;
+  line-height: 1.4;
+}
+
+.mode-row {
+  margin-top: 8px;
+}
+
+.step-section .btn {
+  margin-top: 8px;
+}
+
+.step-section select {
+  margin-bottom: 4px;
+}
+
 /* ── Hidden ── */
 .hidden {
   display: none !important;

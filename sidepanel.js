@@ -11,6 +11,7 @@ let scannedChats = [];       // ChatIndexItem[]
 let selectedChats = [];      // ChatIndexItem[]
 let excludedChats = [];      // ChatIndexItem[]
 let currentMode = 'selected'; // 'selected' | 'exclude'
+let hasProcessedData = false; // true after successful processing
 
 // ── DOM Refs ──
 const $ = (sel) => document.querySelector(sel);
@@ -33,6 +34,7 @@ const els = {
   progressText: $('#progressText'),
   progressDetails: $('#progressDetails'),
   statusBar: $('#statusBar'),
+  scanHint: $('#scanHint'),
   senderName: $('#senderName'),
   messagesPerChat: $('#messagesPerChat'),
   rowMode: $('#rowMode'),
@@ -40,6 +42,14 @@ const els = {
   btnSaveSettings: $('#btnSaveSettings'),
   btnClearData: $('#btnClearData'),
 };
+
+// Step sections (for highlighting)
+const stepSections = [
+  els.btnScan.closest('.step-section'),
+  $('#step2Section'),
+  els.btnProcess.closest('.step-section'),
+  els.btnDownload.closest('.step-section'),
+];
 
 // ── Init ──
 
@@ -72,9 +82,11 @@ document.addEventListener('DOMContentLoaded', async () => {
       renderChips(els.excludedChats, excludedChats, 'excluded');
     }
     updateButtonStates();
+    updateStepHighlight();
   });
 
   bindEvents();
+  updateStepHighlight();
 });
 
 // ── Event Bindings ──
@@ -96,6 +108,7 @@ function bindEvents() {
       currentMode = radio.value;
       els.excludeSection.classList.toggle('hidden', currentMode !== 'exclude');
       updateButtonStates();
+      updateStepHighlight();
     });
   });
 
@@ -123,6 +136,52 @@ function bindEvents() {
       updateProgress(msg.payload);
     }
   });
+}
+
+// ── Step Highlight ──
+
+function updateStepHighlight() {
+  const hasScanned = scannedChats.length > 0;
+  const hasSelection = currentMode === 'exclude'
+    ? scannedChats.length > excludedChats.length
+    : selectedChats.length > 0;
+
+  // Determine current step (0-indexed)
+  let currentStep;
+  if (hasProcessedData) {
+    currentStep = 3; // Download
+  } else if (hasSelection) {
+    currentStep = 2; // Process
+  } else if (hasScanned) {
+    currentStep = 1; // Select chats
+  } else {
+    currentStep = 0; // Scan
+  }
+
+  stepSections.forEach((section, i) => {
+    if (!section) return;
+    section.classList.remove('active-step', 'done-step');
+    if (i < currentStep) {
+      section.classList.add('done-step');
+    } else if (i === currentStep) {
+      section.classList.add('active-step');
+    }
+  });
+
+  // Enable/disable search based on scan state
+  els.chatSearch.disabled = !hasScanned;
+  els.chatSearch.placeholder = hasScanned
+    ? `Search ${scannedChats.length} chats...`
+    : 'Scan inbox first...';
+
+  // Update scan hint
+  if (els.scanHint) {
+    if (hasScanned) {
+      els.scanHint.textContent = `${scannedChats.length} chats found. Now select chats below.`;
+    } else {
+      els.scanHint.textContent = 'Open LinkedIn Messaging or Sales Navigator Inbox, then click Scan.';
+    }
+  }
 }
 
 // ── Search & Suggestions ──
@@ -200,6 +259,7 @@ function renderSuggestions(items) {
       els.chatSearch.value = '';
       els.suggestions.classList.add('hidden');
       updateButtonStates();
+      updateStepHighlight();
     });
   });
 }
@@ -227,6 +287,7 @@ function renderChips(container, chatList, type) {
       }
       persistSelection();
       updateButtonStates();
+      updateStepHighlight();
     });
   });
 }
@@ -241,12 +302,14 @@ function persistSelection() {
 // ── Actions ──
 
 async function onScanInbox() {
-  setStatus('Scanning inbox...');
+  setStatus('Scanning inbox...', '');
   els.btnScan.disabled = true;
+  els.btnScan.textContent = 'Scanning...';
 
   const result = await sendMessage('scanInbox');
 
   els.btnScan.disabled = false;
+  els.btnScan.textContent = 'Scan Inbox';
 
   if (result.error) {
     setStatus(result.error, 'error');
@@ -256,12 +319,13 @@ async function onScanInbox() {
   if (result.chats && result.chats.length > 0) {
     scannedChats = result.chats;
     chrome.storage.local.set({ scannedChats });
-    setStatus(`Found ${scannedChats.length} conversations (${result.platform || 'unknown'})`, 'success');
+    setStatus(`Found ${scannedChats.length} chats. Now select the ones you need.`, 'success');
   } else {
-    setStatus('No conversations found. Make sure you are on the messaging page.', 'error');
+    setStatus('No conversations found. Make sure you are on the messaging page and scroll to load chats.', 'error');
   }
 
   updateButtonStates();
+  updateStepHighlight();
 }
 
 async function onProcessQueue() {
@@ -277,7 +341,7 @@ async function onProcessQueue() {
   }
 
   if (queue.length === 0) {
-    setStatus('No chats to process. Select chats first.', 'error');
+    setStatus('No chats to process. Select chats in step 2 first.', 'error');
     return;
   }
 
@@ -285,6 +349,7 @@ async function onProcessQueue() {
   els.progressPanel.classList.remove('hidden');
   els.progressDetails.innerHTML = '';
   els.btnProcess.disabled = true;
+  els.btnProcess.textContent = 'Processing...';
 
   const result = await sendMessage('processQueue', {
     selectedChatKeys: queue,
@@ -296,10 +361,11 @@ async function onProcessQueue() {
   if (result.error) {
     setStatus(result.error, 'error');
     els.btnProcess.disabled = false;
+    els.btnProcess.textContent = 'Process Selected Chats';
     return;
   }
 
-  setStatus(`Processing ${result.queueLength} chats...`);
+  setStatus(`Processing ${result.queueLength} chats... Please wait.`);
 }
 
 async function onDownload() {
@@ -316,7 +382,7 @@ async function onDownload() {
   if (result.error) {
     setStatus(result.error, 'error');
   } else {
-    setStatus(`Exported ${result.count} rows`, 'success');
+    setStatus(`Exported ${result.count} rows. Done!`, 'success');
   }
 }
 
@@ -330,13 +396,15 @@ async function onClearData() {
   scannedChats = [];
   selectedChats = [];
   excludedChats = [];
+  hasProcessedData = false;
   renderChips(els.selectedChats, [], 'selected');
   renderChips(els.excludedChats, [], 'excluded');
   chrome.storage.local.remove(['scannedChats', 'selectedKeys', 'excludedKeys']);
   await sendMessage('clearData');
   els.progressPanel.classList.add('hidden');
-  setStatus('All data cleared', 'success');
+  setStatus('All data cleared. Start over with step 1.', 'success');
   updateButtonStates();
+  updateStepHighlight();
 }
 
 // ── Settings ──
@@ -368,10 +436,19 @@ function updateProgress(data) {
     els.progressFill.style.width = '100%';
     els.progressText.textContent = `Done! Processed: ${data.processed}/${data.total} | Failed: ${data.failures}`;
     els.btnProcess.disabled = false;
-    setStatus('Processing complete. Click Download to export.', 'success');
+    els.btnProcess.textContent = 'Process Selected Chats';
+    hasProcessedData = data.processed > 0;
+    els.btnDownload.disabled = !hasProcessedData;
+    updateStepHighlight();
+    if (hasProcessedData) {
+      setStatus(`Processing complete! Choose format and click Download.`, 'success');
+    } else {
+      setStatus('No messages extracted. Try selecting different chats.', 'error');
+    }
   } else if (data.status === 'cancelled') {
     els.progressText.textContent = 'Cancelled';
     els.btnProcess.disabled = false;
+    els.btnProcess.textContent = 'Process Selected Chats';
   }
 }
 
@@ -397,7 +474,7 @@ function updateButtonStates() {
     : selectedChats.length > 0;
 
   els.btnProcess.disabled = !hasSelection;
-  els.btnDownload.textContent = els.exportFormat.value === 'csv_anon' ? 'Download (Anon)' : 'Download';
+  els.btnDownload.disabled = !hasProcessedData;
 }
 
 function setStatus(text, type = '') {
