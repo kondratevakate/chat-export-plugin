@@ -61,13 +61,16 @@
   }
 
   // ── Scan Inbox ──
-  // Reads the visible conversation list from the sidebar
+  // Scrolls through the conversation list to load all conversations, then extracts them
 
   async function scanInbox() {
     const listContainer = queryWithFallback(document, SEL.conversationList);
     if (!listContainer) {
       return { error: 'Cannot find conversation list. Make sure you are on the messaging page.' };
     }
+
+    // Auto-scroll the conversation list to load all conversations
+    await autoScrollConversationList(listContainer);
 
     const items = queryAllWithFallback(listContainer, SEL.conversationItem);
     if (items.length === 0) {
@@ -81,6 +84,40 @@
 
     const chats = items.map(parseChatItem).filter(Boolean);
     return { chats, platform: platformId };
+  }
+
+  async function autoScrollConversationList(listContainer) {
+    // Find the scrollable container (the list itself or its parent)
+    const scrollContainer = queryWithFallback(document, SEL.conversationListScrollContainer)
+      || listContainer.closest('.msg-conversations-container')
+      || listContainer.parentElement;
+    if (!scrollContainer) return;
+
+    const maxAttempts = 50;
+    const scrollPause = 500;
+    let attempts = 0;
+    let lastItemCount = 0;
+    let stableRounds = 0;
+
+    while (attempts < maxAttempts) {
+      const currentItems = queryAllWithFallback(listContainer, SEL.conversationItem);
+      const currentCount = currentItems.length;
+
+      if (currentCount === lastItemCount) {
+        stableRounds++;
+        // If count hasn't changed for 3 consecutive scrolls, we've loaded everything
+        if (stableRounds >= 3) break;
+      } else {
+        stableRounds = 0;
+      }
+
+      lastItemCount = currentCount;
+
+      // Scroll to the bottom of the conversation list
+      scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      await sleep(scrollPause);
+      attempts++;
+    }
   }
 
   function parseChatItem(itemEl) {

@@ -103,6 +103,10 @@ const PLATFORM_SELECTORS = {
       primary: '.msg-s-message-list',
       fallback: '.msg-s-message-list-container',
     },
+    conversationListScrollContainer: {
+      primary: '.msg-conversations-container__conversations-list',
+      fallback: '.msg-conversations-container',
+    },
   },
 
   // ── Instagram (placeholder — fill when implementing) ──
