@@ -233,6 +233,10 @@
       const groups = queryAllWithFallback(document, SEL.messageGroup);
       if (groups.length > 0) return true;
 
+      // Sales Navigator: messages use data-x-message-content, check globally
+      const snMessages = document.querySelectorAll('[data-x-message-content="message"]');
+      if (snMessages.length > 0) return true;
+
       await sleep(300);
     }
     return false;
@@ -263,14 +267,20 @@
 
   function getContactNameFromHeader() {
     // Try to get the contact name from the currently open chat header
-    // Selectors for both LinkedIn messaging and Sales Navigator
+    // Sales Navigator: the active conversation item has class "active"
+    if (platformId === 'sales_navigator') {
+      const activeItem = document.querySelector('a.conversation-list-item__link.active [data-anonymize="person-name"]');
+      if (activeItem) return cleanText(activeItem.textContent);
+      // Fallback: any person-name in the lockup title area
+      const lockupName = document.querySelector('.artdeco-entity-lockup__title [data-anonymize="person-name"]');
+      if (lockupName) return cleanText(lockupName.textContent);
+    }
+    // LinkedIn messaging selectors
     const headerName = document.querySelector(
       '.msg-overlay-bubble-header__title, ' +
       '.msg-thread__link-to-profile, ' +
       '.msg-entity-lockup__entity-title, ' +
-      'h2.msg-overlay-bubble-header__title, ' +
-      // Sales Navigator: name from the active conversation detail area
-      '.artdeco-entity-lockup__title [data-anonymize="person-name"]'
+      'h2.msg-overlay-bubble-header__title'
     );
     return cleanText(headerName?.textContent);
   }
@@ -286,7 +296,7 @@
         const nameEl = queryWithFallback(group, SEL.messageSenderName);
         const timeEl = queryWithFallback(group, SEL.messageTimestamp);
         const sender = cleanText(nameEl?.textContent) || '';
-        const timestamp = cleanText(timeEl?.textContent) || '';
+        const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
 
         // Each group may contain multiple message bubbles
         const bodies = queryAllWithFallback(group, SEL.messageBody);
@@ -308,7 +318,7 @@
       }
     }
 
-    // Strategy 2: Flat message items (fallback)
+    // Strategy 2: Flat message items (fallback, and primary for Sales Navigator)
     if (messages.length === 0) {
       const items = queryAllWithFallback(document, SEL.messageItem);
       for (const item of items) {
@@ -318,11 +328,14 @@
 
         const sender = cleanText(nameEl?.textContent) || '';
         const text = cleanText(bodyEl?.textContent);
-        const timestamp = cleanText(timeEl?.textContent) || '';
+        // Prefer ISO datetime attribute (Sales Navigator uses time[datetime])
+        const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
 
         if (!text) continue;
 
-        const isMine = isSenderMatch(sender, senderName);
+        // Sales Navigator: sent messages have no <address> element,
+        // so empty sender means it's the current user's message
+        const isMine = !sender || isSenderMatch(sender, senderName);
         messages.push({
           platform: platform.csvPlatformName,
           messageDateRaw: timestamp,

@@ -79,37 +79,41 @@ const PLATFORM_SELECTORS = {
       primary: 'a.conversation-list-item__link',
       fallback: 'a[href*="/sales/inbox/"]',
     },
+    // Message thread selectors (from live DOM inspection Feb 2026)
+    // Each message is: <li> → <article> → <div data-x-message-content="message">
+    // Sent msgs have no <address>; received msgs have <address> + <time datetime>
     messageList: {
-      primary: '[role="list"]',
-      fallback: '.message-list-content',
+      primary: '[role="list"]:has([data-x-message-content])',
+      fallback: 'ul:has(article)',
     },
     messageItem: {
-      primary: '.message-item',
-      fallback: '[class*="message-item"]',
+      primary: 'li:has([data-x-message-content="message"])',
+      fallback: 'article:has([data-x-message-content])',
     },
     messageSenderName: {
-      primary: '[data-anonymize="person-name"]',
-      fallback: '.message-item__sender .t-bold',
+      primary: 'address.t-bold',
+      fallback: 'address',
     },
     messageBody: {
-      primary: '[data-anonymize="general-blurb"]',
-      fallback: '.message-item__body, .message-body',
+      primary: 'div[data-x-message-content="message"]',
+      fallback: 'p[data-anonymize="general-blurb"]',
     },
     messageTimestamp: {
-      primary: 'time.message-item__timestamp',
-      fallback: 'time',
+      primary: 'time[datetime]',
+      fallback: 'time.t-12',
     },
     messageGroup: {
-      primary: '.message-group',
-      fallback: '[class*="message-group"]',
+      // Sales Navigator does NOT group messages — each is standalone
+      primary: '.sn-nonexistent-message-group',
+      fallback: '.sn-nonexistent-message-group-2',
     },
     messageGroupMeta: {
-      primary: '.message-group__meta',
-      fallback: '.message-group__sender-info',
+      primary: '.sn-nonexistent-group-meta',
+      fallback: '.sn-nonexistent-group-meta-2',
     },
     messageScrollContainer: {
-      primary: '.message-list-container',
-      fallback: '[class*="message-list"]',
+      primary: '[role="list"]:has([data-x-message-content])',
+      fallback: '[role="main"] [role="list"]',
     },
   },
 
