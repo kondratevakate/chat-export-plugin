@@ -160,15 +160,28 @@
   // ── Extract Chat Messages ──
   // State machine: OPEN_CHAT -> WAIT_RENDER -> SCROLL_TOP -> COLLECT -> DONE
 
+  // Track previous chat's message fingerprint to detect DOM changes
+  let _prevMessageFingerprint = '';
+
+  function getMessageFingerprint() {
+    const els = document.querySelectorAll('[data-x-message-content]');
+    if (els.length === 0) return '';
+    // Use first message's text as fingerprint
+    return els[0].textContent.slice(0, 80);
+  }
+
   async function extractChat(chatKey, settings) {
     const n = settings?.messagesPerChat || 8;
     const senderName = settings?.senderName || 'Kate Kondrateva';
     let state = State.OPEN_CHAT;
     const startTime = Date.now();
+    const debug = [];
 
     try {
       // ── OPEN_CHAT ──
       if (state === State.OPEN_CHAT) {
+        // Record current message fingerprint BEFORE clicking new chat
+        _prevMessageFingerprint = getMessageFingerprint();
         const opened = await openChat(chatKey);
         if (!opened) {
           return { error: 'Could not open chat', chatKey };
@@ -180,7 +193,8 @@
       if (state === State.WAIT_RENDER) {
         const rendered = await waitForMessages();
         if (!rendered) {
-          return { error: 'Messages did not render in time', chatKey };
+          debug.push('waitForMessages timed out');
+          return { error: 'Messages did not render in time', chatKey, debug };
         }
         state = State.SCROLL_TOP;
       }
@@ -195,27 +209,28 @@
       if (state === State.COLLECT) {
         const contactName = getContactNameFromHeader() || chatKeyToName(chatKey);
         const allMessages = collectMessages(senderName, contactName, chatKey);
+        debug.push(`all=${allMessages.length}`);
 
         // Filter to first N messages authored by the user
         const myMessages = allMessages.filter(m => m.sender === senderName);
+        debug.push(`mine=${myMessages.length}`);
         const firstN = myMessages.slice(0, n);
 
-        // If rowMode includes all messages (both sides), return all but capped
-        // For "one row per message" with only sender's messages:
         return {
           messages: firstN,
-          allMessages: allMessages.slice(0, n * 3), // Keep context for conversation mode
+          allMessages: allMessages.slice(0, n * 3),
           chatKey,
           total: allMessages.length,
           collected: firstN.length,
           partial: firstN.length < n,
+          debug,
         };
       }
     } catch (err) {
-      return { error: err.message, chatKey };
+      return { error: err.message, chatKey, debug };
     }
 
-    return { error: 'Unexpected state', chatKey };
+    return { error: 'Unexpected state', chatKey, debug };
   }
 
   // ── State Machine Helpers ──
@@ -228,7 +243,7 @@
       const link = queryWithFallback(item, SEL.conversationItemLink);
       if (link?.href?.includes(chatKey)) {
         link.click();
-        await sleep(800);
+        await sleep(1500);
         return true;
       }
 
@@ -239,7 +254,7 @@
       if (name && expectedName && name.toLowerCase() === expectedName.toLowerCase()) {
         const clickTarget = link || item;
         clickTarget.click();
-        await sleep(800);
+        await sleep(1500);
         return true;
       }
     }
@@ -252,17 +267,41 @@
 
   async function waitForMessages() {
     const deadline = Date.now() + LIMITS.renderTimeout;
+
+    // For Sales Navigator: wait for the message content to CHANGE from
+    // the previous chat (prevents reading stale DOM from the prior chat)
+    if (platformId === 'sales_navigator') {
+      while (Date.now() < deadline) {
+        const currentFp = getMessageFingerprint();
+        const dataXEls = document.querySelectorAll('[data-x-message-content]');
+
+        // Messages present AND different from previous chat
+        if (dataXEls.length > 0 && currentFp !== _prevMessageFingerprint) {
+          return true;
+        }
+        // If no previous fingerprint (first chat), just check presence
+        if (!_prevMessageFingerprint && dataXEls.length > 0) {
+          return true;
+        }
+
+        await sleep(300);
+      }
+      // Last resort: accept whatever is there (might be same chat reopened)
+      const dataXEls = document.querySelectorAll('[data-x-message-content]');
+      if (dataXEls.length > 0) return true;
+      return false;
+    }
+
+    // Standard LinkedIn / other platforms
     while (Date.now() < deadline) {
       const messageList = queryWithFallback(document, SEL.messageList);
       if (messageList) {
         const items = queryAllWithFallback(messageList, SEL.messageItem);
         if (items.length > 0) return true;
       }
-      // Also try message groups
       const groups = queryAllWithFallback(document, SEL.messageGroup);
       if (groups.length > 0) return true;
 
-      // Sales Navigator: messages use data-x-message-content, check globally
       const snMessages = document.querySelectorAll('[data-x-message-content="message"]');
       if (snMessages.length > 0) return true;
 
@@ -272,9 +311,38 @@
   }
 
   async function scrollToLoadMore(startTime) {
-    const scrollContainer = queryWithFallback(document, SEL.messageScrollContainer);
-    if (!scrollContainer) return;
+    // Try the configured selector first
+    let scrollContainer = queryWithFallback(document, SEL.messageScrollContainer);
 
+    // Sales Navigator: find scroll container dynamically
+    if (!scrollContainer && platformId === 'sales_navigator') {
+      // Find the message list (ul containing articles) and walk up to the scrollable parent
+      const messageUl = document.querySelector('ul:has(article [data-x-message-content])');
+      if (messageUl) {
+        // Walk up to find the first scrollable ancestor
+        let el = messageUl;
+        while (el && el !== document.body) {
+          const style = getComputedStyle(el);
+          const overflowY = style.overflowY;
+          if ((overflowY === 'auto' || overflowY === 'scroll') && el.scrollHeight > el.clientHeight) {
+            scrollContainer = el;
+            break;
+          }
+          el = el.parentElement;
+        }
+        // If no scrollable parent found, try the ul itself
+        if (!scrollContainer && messageUl.scrollHeight > messageUl.clientHeight) {
+          scrollContainer = messageUl;
+        }
+      }
+    }
+
+    if (!scrollContainer) {
+      console.log('[ChatExport] No scroll container found for messages');
+      return;
+    }
+
+    console.log(`[ChatExport] Scrolling message container (tag: ${scrollContainer.tagName}, height: ${scrollContainer.scrollHeight})`);
     let attempts = 0;
     let lastHeight = scrollContainer.scrollHeight;
 
@@ -286,7 +354,6 @@
 
       const newHeight = scrollContainer.scrollHeight;
       if (newHeight === lastHeight) {
-        // No new content loaded — we've likely reached the top
         break;
       }
       lastHeight = newHeight;
@@ -317,63 +384,23 @@
   function collectMessages(senderName, contactName, chatKey) {
     const messages = [];
 
-    // Strategy 1: Collect from message groups (LinkedIn groups sequential messages)
-    const groups = queryAllWithFallback(document, SEL.messageGroup);
-    console.log(`[ChatExport] Strategy 1 — message groups: ${groups.length} (selector: ${SEL.messageGroup.primary})`);
-
-    if (groups.length > 0) {
-      for (const group of groups) {
-        const nameEl = queryWithFallback(group, SEL.messageSenderName);
-        const timeEl = queryWithFallback(group, SEL.messageTimestamp);
-        const sender = cleanText(nameEl?.textContent) || '';
-        const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
-
-        // Each group may contain multiple message bubbles
-        const bodies = queryAllWithFallback(group, SEL.messageBody);
-        for (const body of bodies) {
-          const text = cleanText(body?.textContent);
-          if (!text) continue;
-
-          // Determine if this is the user's message or the contact's
-          const isMine = isSenderMatch(sender, senderName);
-          messages.push({
-            platform: platform.csvPlatformName,
-            messageDateRaw: timestamp,
-            sender: isMine ? senderName : sender || contactName,
-            receiver: isMine ? contactName : senderName,
-            text,
-            chatKey,
-          });
-        }
-      }
-    }
-
-    // Strategy 2: Flat message items (fallback, and primary for Sales Navigator)
-    if (messages.length === 0) {
-      const items = queryAllWithFallback(document, SEL.messageItem);
-      console.log(`[ChatExport] Strategy 2 — flat items: ${items.length} (selector: ${SEL.messageItem.primary})`);
-
-      // Debug: check raw existence of key elements
+    // ── Sales Navigator: Direct extraction using [data-x-message-content] ──
+    // This is the most reliable approach — find message content divs directly
+    // and walk up the DOM tree for metadata.
+    if (platformId === 'sales_navigator') {
       const rawDataX = document.querySelectorAll('[data-x-message-content]');
-      const rawDataXMsg = document.querySelectorAll('[data-x-message-content="message"]');
-      console.log(`[ChatExport] Raw [data-x-message-content]: ${rawDataX.length}, [data-x-message-content="message"]: ${rawDataXMsg.length}`);
-      if (rawDataX.length > 0 && rawDataXMsg.length === 0) {
-        // The attribute value changed — log what we see
-        const sampleValues = [...rawDataX].slice(0, 5).map(el => el.getAttribute('data-x-message-content'));
-        console.log(`[ChatExport] data-x-message-content values:`, sampleValues);
-      }
+      console.log(`[ChatExport] SN direct extraction: ${rawDataX.length} [data-x-message-content] elements`);
 
-      for (const item of items) {
-        const nameEl = queryWithFallback(item, SEL.messageSenderName);
-        const bodyEl = queryWithFallback(item, SEL.messageBody);
-        const timeEl = queryWithFallback(item, SEL.messageTimestamp);
-
-        const sender = cleanText(nameEl?.textContent) || '';
-        const text = cleanText(bodyEl?.textContent);
-        // Prefer ISO datetime attribute (Sales Navigator uses time[datetime])
-        const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
-
+      for (const el of rawDataX) {
+        const text = cleanText(el.textContent);
         if (!text) continue;
+
+        // Walk up to find the containing list item or article
+        const container = el.closest('li') || el.closest('article') || el.parentElement;
+        const nameEl = container?.querySelector('address') || container?.querySelector('[data-anonymize="person-name"]');
+        const timeEl = container?.querySelector('time[datetime]') || container?.querySelector('time');
+        const sender = cleanText(nameEl?.textContent) || '';
+        const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
 
         // Sales Navigator: sent messages have no <address> element,
         // so empty sender means it's the current user's message
@@ -388,20 +415,18 @@
         });
       }
 
-      // Strategy 3: Direct fallback using [data-x-message-content] if selectors missed
-      if (messages.length === 0 && rawDataX.length > 0) {
-        console.log(`[ChatExport] Strategy 3 — direct data-x-message-content fallback`);
-        for (const el of rawDataX) {
-          const text = cleanText(el.textContent);
+      // If direct extraction found nothing, also try the messageItem selectors
+      if (messages.length === 0) {
+        const items = queryAllWithFallback(document, SEL.messageItem);
+        console.log(`[ChatExport] SN fallback — messageItem: ${items.length}`);
+        for (const item of items) {
+          const bodyEl = queryWithFallback(item, SEL.messageBody);
+          const text = cleanText(bodyEl?.textContent);
           if (!text) continue;
-
-          // Walk up to find the containing list item
-          const li = el.closest('li') || el.closest('article') || el.parentElement;
-          const nameEl = li?.querySelector('address') || li?.querySelector('[data-anonymize="person-name"]');
-          const timeEl = li?.querySelector('time[datetime]') || li?.querySelector('time');
+          const nameEl = queryWithFallback(item, SEL.messageSenderName);
+          const timeEl = queryWithFallback(item, SEL.messageTimestamp);
           const sender = cleanText(nameEl?.textContent) || '';
           const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
-
           const isMine = !sender || isSenderMatch(sender, senderName);
           messages.push({
             platform: platform.csvPlatformName,
@@ -412,7 +437,68 @@
             chatKey,
           });
         }
-        console.log(`[ChatExport] Strategy 3 found: ${messages.length} messages`);
+      }
+
+      console.log(`[ChatExport] SN collectMessages total: ${messages.length} (sender: "${senderName}", contact: "${contactName}")`);
+      return messages;
+    }
+
+    // ── Standard LinkedIn / other platforms ──
+
+    // Strategy 1: Collect from message groups (LinkedIn groups sequential messages)
+    const groups = queryAllWithFallback(document, SEL.messageGroup);
+    console.log(`[ChatExport] Strategy 1 — message groups: ${groups.length} (selector: ${SEL.messageGroup.primary})`);
+
+    if (groups.length > 0) {
+      for (const group of groups) {
+        const nameEl = queryWithFallback(group, SEL.messageSenderName);
+        const timeEl = queryWithFallback(group, SEL.messageTimestamp);
+        const sender = cleanText(nameEl?.textContent) || '';
+        const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
+
+        const bodies = queryAllWithFallback(group, SEL.messageBody);
+        for (const body of bodies) {
+          const text = cleanText(body?.textContent);
+          if (!text) continue;
+
+          const isMine = isSenderMatch(sender, senderName);
+          messages.push({
+            platform: platform.csvPlatformName,
+            messageDateRaw: timestamp,
+            sender: isMine ? senderName : sender || contactName,
+            receiver: isMine ? contactName : senderName,
+            text,
+            chatKey,
+          });
+        }
+      }
+    }
+
+    // Strategy 2: Flat message items
+    if (messages.length === 0) {
+      const items = queryAllWithFallback(document, SEL.messageItem);
+      console.log(`[ChatExport] Strategy 2 — flat items: ${items.length} (selector: ${SEL.messageItem.primary})`);
+
+      for (const item of items) {
+        const nameEl = queryWithFallback(item, SEL.messageSenderName);
+        const bodyEl = queryWithFallback(item, SEL.messageBody);
+        const timeEl = queryWithFallback(item, SEL.messageTimestamp);
+
+        const sender = cleanText(nameEl?.textContent) || '';
+        const text = cleanText(bodyEl?.textContent);
+        const timestamp = timeEl?.getAttribute('datetime') || cleanText(timeEl?.textContent) || '';
+
+        if (!text) continue;
+
+        const isMine = !sender || isSenderMatch(sender, senderName);
+        messages.push({
+          platform: platform.csvPlatformName,
+          messageDateRaw: timestamp,
+          sender: isMine ? senderName : sender || contactName,
+          receiver: isMine ? contactName : senderName,
+          text,
+          chatKey,
+        });
       }
     }
 

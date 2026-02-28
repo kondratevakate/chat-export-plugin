@@ -227,7 +227,7 @@ async function processQueue(queue, settings) {
         const filtered = filterMessages(result.messages, settings);
         extractedMessages.push(...filtered);
         runState.processedChatKeys.push(chatKey);
-        console.log(`[SW] Chat ${chatKey}: ${result.total || 0} found, ${result.collected || 0} sender msgs, ${filtered.length} after filter`);
+        console.log(`[SW] Chat ${chatKey}: ${result.total || 0} found, ${result.collected || 0} sender msgs, ${filtered.length} after filter${result.debug ? ' | ' + result.debug.join(', ') : ''}`);
       }
     } catch (err) {
       runState.failures.push({ chatKey, reason: err.message });
