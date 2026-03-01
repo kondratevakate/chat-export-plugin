@@ -138,26 +138,36 @@ async function forwardToContentScript(action, payload) {
 
   console.log(`[SW] Forwarding "${action}" to tab ${tab.id} (${tab.url})`);
 
+  // Try sending directly first
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { action, payload });
-    return response;
-  } catch (err) {
-    // Content script not loaded — try to inject it automatically
-    console.warn(`[SW] Content script not responding on tab ${tab.id}, injecting...`);
+    return await chrome.tabs.sendMessage(tab.id, { action, payload });
+  } catch {
+    // Content script not loaded — will inject below
+  }
+
+  // Inject content script programmatically
+  console.log(`[SW] Content script not loaded on tab ${tab.id}, injecting...`);
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ['selectors.js', 'content_script.js'],
+    });
+  } catch (injectErr) {
+    console.error(`[SW] Failed to inject content script:`, injectErr);
+    return { error: 'Could not inject content script. Try refreshing the page.' };
+  }
+
+  // Retry with increasing delays (script needs time to initialize)
+  for (const delay of [500, 1000, 2000]) {
+    await sleep(delay);
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        files: ['selectors.js', 'content_script.js'],
-      });
-      // Wait for script to initialize
-      await sleep(500);
-      const response = await chrome.tabs.sendMessage(tab.id, { action, payload });
-      return response;
-    } catch (injectErr) {
-      console.error(`[SW] Failed to inject content script:`, injectErr);
-      return { error: `Content script not responding. Try refreshing the page.` };
+      return await chrome.tabs.sendMessage(tab.id, { action, payload });
+    } catch {
+      console.log(`[SW] Retry after ${delay}ms — content script not ready yet`);
     }
   }
+
+  return { error: 'Content script not responding after injection. Try refreshing the page.' };
 }
 
 // ── Queue Processing ──
