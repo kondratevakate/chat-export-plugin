@@ -438,14 +438,20 @@ async function inspectActiveTab() {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab) return { error: 'No active tab.' };
-    const platformId = detectPlatformFromUrl(tab.url || '');
-    const platform = platformId ? PLATFORMS[platformId] : null;
+    const info = detectPageInfo(tab.url || '');
+    const platform = info.platform ? PLATFORMS[info.platform] : null;
     return {
       url: tab.url,
       title: tab.title,
-      platformId,
+      // legacy fields (kept for backward compat with older side panels)
+      platformId: info.platform,
       platformLabel: platform ? platform.label : null,
-      supported: !!platformId,
+      supported: info.ready === true,
+      // new rich descriptor — drives the smart banner
+      pageType: info.pageType,
+      pageLabel: info.label,
+      recommend: info.recommend,
+      ready: info.ready,
     };
   } catch (err) {
     return { error: 'inspectActiveTab failed: ' + err.message };

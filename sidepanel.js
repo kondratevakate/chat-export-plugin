@@ -50,6 +50,7 @@ const els = {
   detectBanner: $('#detectBanner'),
   detectIcon: $('#detectIcon'),
   detectMessage: $('#detectMessage'),
+  detectRecommend: $('#detectRecommend'),
   detectUrl: $('#detectUrl'),
   btnInspect: $('#btnInspect'),
   btnRefreshDetect: $('#btnRefreshDetect'),
@@ -703,32 +704,33 @@ function sendMessage(action, payload) {
 // ── Active-tab detection + inspection ──
 
 async function refreshDetectBanner() {
-  setDetectBanner({ icon: '⏳', message: 'Checking active tab…', url: '', state: 'loading' });
+  setDetectBanner({ icon: '⏳', message: 'Checking active tab…', recommend: '', url: '', state: 'loading' });
   const r = await sendMessage('inspectActiveTab');
   if (!r || r.error) {
-    setDetectBanner({ icon: '❓', message: r?.error || 'Could not read active tab.', url: '', state: 'unsupported' });
+    setDetectBanner({ icon: '❓', message: r?.error || 'Could not read active tab.', recommend: '', url: '', state: 'unsupported' });
     return;
   }
-  if (r.supported) {
-    setDetectBanner({
-      icon: '🟢',
-      message: `${r.platformLabel} detected — ready to scrape.`,
-      url: r.url || '',
-      state: 'supported',
-    });
-  } else {
-    setDetectBanner({
-      icon: '⚠️',
-      message: 'This page is not yet supported.',
-      url: r.url || '',
-      state: 'unsupported',
-    });
-  }
+  let icon, state;
+  if (r.ready === true) { icon = '🟢'; state = 'supported'; }
+  else if (r.ready === false) { icon = '⚠️'; state = 'unsupported'; }
+  else { icon = '❓'; state = 'unsupported'; }
+  setDetectBanner({
+    icon,
+    message: r.pageLabel || 'Unknown page',
+    recommend: r.recommend || '',
+    url: r.url || '',
+    state,
+  });
 }
 
-function setDetectBanner({ icon, message, url, state }) {
+function setDetectBanner({ icon, message, recommend, url, state }) {
   els.detectIcon.textContent = icon;
   els.detectMessage.textContent = message;
+  // The recommendation lives on a separate line below the page label.
+  if (els.detectRecommend) {
+    els.detectRecommend.textContent = recommend || '';
+    els.detectRecommend.classList.toggle('hidden', !recommend);
+  }
   els.detectUrl.textContent = url ? safeShortenUrl(url) : '';
   els.detectBanner.classList.remove('detect-loading', 'detect-supported', 'detect-unsupported');
   els.detectBanner.classList.add('detect-' + state);

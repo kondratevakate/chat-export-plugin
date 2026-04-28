@@ -285,6 +285,191 @@ function detectPlatformFromUrl(urlString) {
 }
 
 /**
+ * Identify the kind of page the user is on and what we can do with it.
+ *
+ * Returns a richer descriptor than detectPlatformFromUrl — used by the side
+ * panel banner to tell the user "you're on LinkedIn audience analytics; we
+ * can read X but the chart numbers are inside an iframe we can't reach yet".
+ *
+ *   ready: true  → existing extraction works on this page right now
+ *   ready: false → we recognise the page but can't extract yet (TBD or blocked)
+ *   ready: null  → unknown page; show the generic "not supported" banner
+ *
+ * @param {string} urlString
+ * @returns {{
+ *   platform: string|null,    // PLATFORMS key if scrapable, else null
+ *   pageType: string,         // stable id of the page type (used for analytics)
+ *   label: string,            // human-readable page name
+ *   recommend: string,        // 1-line suggestion for the user
+ *   ready: boolean|null,
+ * }}
+ */
+function detectPageInfo(urlString) {
+  let host = '', path = '';
+  try {
+    const u = new URL(urlString);
+    host = u.hostname;
+    path = u.pathname;
+  } catch {
+    return { platform: null, pageType: 'unknown', label: 'Unknown URL', recommend: '', ready: null };
+  }
+
+  // ── LinkedIn ──
+  if (/(^|\.)linkedin\.com$/.test(host)) {
+    if (path.startsWith('/sales/inbox/')) {
+      return {
+        platform: 'sales_navigator',
+        pageType: 'sales_inbox',
+        label: 'Sales Navigator Inbox',
+        recommend: 'Click "Scan Inbox" to read your conversation list, then process selected chats.',
+        ready: true,
+      };
+    }
+    if (/^\/sales\/lists\/people\/\d+/.test(path)) {
+      return {
+        platform: null,
+        pageType: 'sales_lead_list_detail',
+        label: 'Sales Navigator lead list (detail)',
+        recommend: 'Lead-list export is on the roadmap (clean Ember markup — easy to add). Inspect to send DOM sample.',
+        ready: false,
+      };
+    }
+    if (path.startsWith('/sales/lists/people')) {
+      return {
+        platform: null,
+        pageType: 'sales_lead_lists_overview',
+        label: 'Sales Navigator lead lists',
+        recommend: 'Open one of the lists to see its rows, then come back here.',
+        ready: false,
+      };
+    }
+    if (path.startsWith('/sales/home')) {
+      return {
+        platform: null,
+        pageType: 'sales_home',
+        label: 'Sales Navigator home / alerts',
+        recommend: 'Alerts feed export is on the roadmap. Inspect to send DOM sample.',
+        ready: false,
+      };
+    }
+    if (path.startsWith('/sales/')) {
+      return {
+        platform: null,
+        pageType: 'sales_other',
+        label: 'Sales Navigator (other page)',
+        recommend: 'No extractor for this page yet. Inspect to send DOM sample.',
+        ready: false,
+      };
+    }
+    if (path.startsWith('/messaging/')) {
+      return {
+        platform: 'linkedin',
+        pageType: 'linkedin_messaging',
+        label: 'LinkedIn Messaging (new SDUI)',
+        recommend: 'LinkedIn rewrote messaging into SDUI; the new chat list is inside an iframe we can\'t reach yet. Use Sales Navigator Inbox for chat extraction.',
+        ready: false,
+      };
+    }
+    if (/^\/in\/[^/]+\/recent-activity\b/.test(path)) {
+      return {
+        platform: null,
+        pageType: 'linkedin_posts',
+        label: 'Your LinkedIn activity / posts',
+        recommend: 'Posts export is on the roadmap. Each post has a "View analytics" button we can crawl. Inspect to send DOM sample.',
+        ready: false,
+      };
+    }
+    if (path.startsWith('/analytics/post/')) {
+      return {
+        platform: null,
+        pageType: 'linkedin_post_analytics',
+        label: 'Per-post analytics',
+        recommend: 'Post analytics export is on the roadmap. Inspect to send DOM sample.',
+        ready: false,
+      };
+    }
+    if (path.startsWith('/analytics/creator/audience')) {
+      return {
+        platform: null,
+        pageType: 'linkedin_audience_analytics',
+        label: 'Audience analytics (followers, demographics)',
+        recommend: 'Highcharts data is rendered inside an iframe we can\'t directly reach. Workaround in progress.',
+        ready: false,
+      };
+    }
+    if (path.startsWith('/analytics/creator/content')) {
+      return {
+        platform: null,
+        pageType: 'linkedin_content_analytics',
+        label: 'Content analytics (post performance)',
+        recommend: 'Highcharts data is rendered inside an iframe we can\'t directly reach. Workaround in progress.',
+        ready: false,
+      };
+    }
+    if (/^\/in\/[^/]+\/?$/.test(path)) {
+      return {
+        platform: null,
+        pageType: 'linkedin_profile',
+        label: 'A LinkedIn profile',
+        recommend: 'Open Activity (/recent-activity/all/) to extract posts.',
+        ready: false,
+      };
+    }
+    if (path.startsWith('/feed')) {
+      return {
+        platform: null,
+        pageType: 'linkedin_feed',
+        label: 'LinkedIn home feed',
+        recommend: 'No extractor for the feed. Inspect to send DOM sample.',
+        ready: false,
+      };
+    }
+    return {
+      platform: null,
+      pageType: 'linkedin_other',
+      label: 'LinkedIn (other page)',
+      recommend: 'No extractor for this page yet. Inspect to send DOM sample.',
+      ready: false,
+    };
+  }
+
+  // ── WhatsApp Web ──
+  if (host === 'web.whatsapp.com') {
+    return {
+      platform: 'whatsapp',
+      pageType: 'whatsapp_web',
+      label: 'WhatsApp Web',
+      recommend: 'Click "Scan Inbox" to read your chat list.',
+      ready: true,
+    };
+  }
+
+  // ── Telegram Web ──
+  if (host === 'web.telegram.org') {
+    return {
+      platform: 'telegram',
+      pageType: 'telegram_web',
+      label: 'Telegram Web',
+      recommend: 'Selectors are scaffolded but untested. Try Scan; if 0 chats, click Inspect and send DOM sample.',
+      ready: true,
+    };
+  }
+
+  // ── Instagram DMs ──
+  if (/(^|\.)instagram\.com$/.test(host) && path.startsWith('/direct/')) {
+    return {
+      platform: 'instagram',
+      pageType: 'instagram_dms',
+      label: 'Instagram DMs',
+      recommend: 'Selectors are scaffolded but untested. Try Scan; if 0 chats, click Inspect and send DOM sample.',
+      ready: true,
+    };
+  }
+
+  return { platform: null, pageType: 'unknown', label: 'Page not supported', recommend: 'Click Inspect to send a DOM sample for adding this site.', ready: null };
+}
+
+/**
  * Get selectors for a platform.
  * @param {string} platformId
  * @returns {object} Selector map
@@ -329,6 +514,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.PLATFORM_SELECTORS = PLATFORM_SELECTORS;
   globalThis.detectPlatform = detectPlatform;
   globalThis.detectPlatformFromUrl = detectPlatformFromUrl;
+  globalThis.detectPageInfo = detectPageInfo;
   globalThis.getSelectors = getSelectors;
   globalThis.queryWithFallback = queryWithFallback;
   globalThis.queryAllWithFallback = queryAllWithFallback;

@@ -79,10 +79,17 @@ body {
   color: #222;
 }
 
-.detect-url {
-  margin-top: 2px;
+.detect-recommend {
+  margin-top: 4px;
   font-size: 11px;
-  color: #666;
+  color: #444;
+  line-height: 1.4;
+}
+
+.detect-url {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #888;
   word-break: break-all;
   white-space: nowrap;
   overflow: hidden;
