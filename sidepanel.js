@@ -58,6 +58,9 @@ const els = {
   inspectOutput: $('#inspectOutput'),
   btnCopyInspect: $('#btnCopyInspect'),
   btnDownloadInspect: $('#btnDownloadInspect'),
+  btnAutoDetect: $('#btnAutoDetect'),
+  autoDetectStatus: $('#autoDetectStatus'),
+  anthropicApiKey: $('#anthropicApiKey'),
 };
 
 let lastInspection = null; // { markdown, filename, sample }
@@ -75,6 +78,12 @@ const stepSections = [
 document.addEventListener('DOMContentLoaded', async () => {
   // Set default "To" date to today
   els.dateTo.value = new Date().toISOString().slice(0, 10);
+
+  // Load API key
+  const apiKeyResp = await sendMessage('getApiKey');
+  if (apiKeyResp && apiKeyResp.apiKey) {
+    els.anthropicApiKey.value = apiKeyResp.apiKey;
+  }
 
   // Load settings
   const settings = await sendMessage('getSettings');
@@ -156,6 +165,10 @@ function bindEvents() {
   els.btnRefreshDetect.addEventListener('click', refreshDetectBanner);
   els.btnCopyInspect.addEventListener('click', onCopyInspection);
   els.btnDownloadInspect.addEventListener('click', onDownloadInspection);
+  els.btnAutoDetect.addEventListener('click', onAutoDetectSelectors);
+  // Persist API key on blur so user doesn't have to click Save.
+  els.anthropicApiKey.addEventListener('change', onSaveApiKey);
+  els.anthropicApiKey.addEventListener('blur', onSaveApiKey);
 
   // Settings
   els.btnSaveSettings.addEventListener('click', onSaveSettings);
@@ -823,6 +836,48 @@ async function onCopyInspection() {
     setStatus('DOM sample copied to clipboard.', 'success');
   } catch (err) {
     setStatus('Could not copy: ' + err.message, 'error');
+  }
+}
+
+async function onSaveApiKey() {
+  const apiKey = els.anthropicApiKey.value.trim();
+  await sendMessage('setApiKey', { apiKey });
+  if (apiKey) setStatus('API key saved.', 'success');
+}
+
+async function onAutoDetectSelectors() {
+  uiLog.info('autoDetect.clicked');
+  els.btnAutoDetect.disabled = true;
+  els.btnAutoDetect.textContent = '🤖 Asking Claude…';
+  els.autoDetectStatus.classList.remove('hidden');
+  els.autoDetectStatus.textContent = 'Sending DOM probe to Claude…';
+  try {
+    const result = await sendMessage('autoDetectSelectors', {});
+    if (result.error) {
+      setStatus(result.error, 'error');
+      els.autoDetectStatus.textContent = '❌ ' + result.error;
+      return;
+    }
+    // Render counts as Markdown-ish text.
+    const lines = [`✅ Got selectors for platform "${result.platform}"`, ''];
+    if (result.rationale) lines.push(result.rationale, '');
+    lines.push('Match counts on this page:');
+    for (const [key, c] of Object.entries(result.counts || {})) {
+      const total = (c.primary || 0) + (c.fallback || 0);
+      const flag = total > 0 ? '✓' : '✗';
+      lines.push(`${flag} ${key}: primary=${c.primary || 0}, fallback=${c.fallback || 0}`);
+    }
+    lines.push('', '--- Proposed selectors (paste into selectors.js) ---');
+    lines.push(JSON.stringify({ [result.platform]: result.selectors }, null, 2));
+    els.inspectOutput.value = lines.join('\n');
+    els.autoDetectStatus.textContent = '✅ Done — review the result above.';
+    setStatus('Claude proposed selectors. See inspection panel.', 'success');
+  } catch (err) {
+    setStatus('Auto-detect failed: ' + err.message, 'error');
+    els.autoDetectStatus.textContent = '❌ ' + err.message;
+  } finally {
+    els.btnAutoDetect.disabled = false;
+    els.btnAutoDetect.textContent = '🤖 Auto-detect selectors with Claude';
   }
 }
 

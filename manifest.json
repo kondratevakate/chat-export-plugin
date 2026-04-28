@@ -15,7 +15,8 @@
     "*://*.linkedin.com/*",
     "*://*.instagram.com/*",
     "*://web.whatsapp.com/*",
-    "*://web.telegram.org/*"
+    "*://web.telegram.org/*",
+    "https://api.anthropic.com/*"
   ],
   "background": {
     "service_worker": "service_worker.js"

@@ -10,8 +10,11 @@
 
 /* global CSVBuilder, Anonymize, Redact, Logger, Extractor */
 
-// Import utility scripts into service worker scope
-importScripts('utils/logger.js', 'utils/extractor.js', 'utils/anonymize.js', 'utils/csv.js', 'utils/redact.js');
+// Import utility scripts into service worker scope.
+// selectors.js MUST be imported here too — startProcessing and
+// inspectActiveTab call detectPlatformFromUrl/detectPageInfo, which only
+// exist after selectors.js runs in the SW global scope.
+importScripts('utils/logger.js', 'utils/extractor.js', 'utils/anonymize.js', 'utils/csv.js', 'utils/redact.js', 'selectors.js');
 
 const log = Logger.logFor('sw');
 
@@ -99,6 +102,18 @@ async function handleMessage(message, sender) {
 
     case 'captureDomSample':
       return captureDomSample();
+
+    case 'autoDetectSelectors':
+      return autoDetectSelectors(payload);
+
+    case 'setApiKey':
+      await chrome.storage.local.set({ anthropicApiKey: payload?.apiKey || '' });
+      return { ok: true };
+
+    case 'getApiKey':
+      return new Promise((resolve) => {
+        chrome.storage.local.get(['anthropicApiKey'], (r) => resolve({ apiKey: r.anthropicApiKey || '' }));
+      });
 
     case 'getLog':
       return { text: buildMergedLogText(payload?.uiLines) };
@@ -507,6 +522,148 @@ async function captureDomSample() {
 function slugifyHost(url) {
   try { return new URL(url).hostname.replace(/[^a-z0-9]/gi, '-'); }
   catch { return 'page'; }
+}
+
+// ── Auto-detect selectors via Claude API ──
+//
+// Sends the current page's DOM probe to Claude with a small system prompt
+// asking for fresh selectors when the existing ones return 0 matches.
+// One-shot: probe → API → apply → report. The user can re-click for
+// another iteration if the first try misses.
+
+async function autoDetectSelectors(_payload) {
+  // 1. Get API key
+  const stored = await new Promise((resolve) =>
+    chrome.storage.local.get(['anthropicApiKey'], resolve)
+  );
+  const apiKey = stored.anthropicApiKey;
+  if (!apiKey) {
+    return { error: 'No Anthropic API key set. Open Advanced settings and paste a key (sk-ant-...).' };
+  }
+
+  // 2. Capture current DOM probe
+  const probeResult = await captureDomSample();
+  if (probeResult.error) return { error: 'Could not probe page: ' + probeResult.error };
+  const probe = probeResult.sample;
+
+  // 3. Detect current platform from URL
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const platformId = tab ? detectPlatformFromUrl(tab.url || '') : null;
+
+  // 4. Build prompt + call Claude
+  const systemPrompt = `You are a DOM selector author for a Chrome extension that scrapes messaging UIs.
+Given a structural DOM probe of a page, you propose CSS selectors that find:
+- conversationList:        the container of the chat list
+- conversationItem:        each individual chat row (repeats N times)
+- conversationItemName:    the contact / chat name inside one row
+- conversationItemPreview: the last-message preview inside one row
+- conversationItemLink:    the clickable link/button to open the chat
+- messageList:             the container of messages inside an open chat
+- messageItem:             each individual message bubble
+- messageBody:             the text content of a message
+- messageSenderName:       the author of a message
+- messageTimestamp:        the timestamp of a message
+
+Each selector has a primary (preferred — semantic / aria / data-*) and a fallback (structural / class).
+Return ONLY a single JSON object. Do not include markdown fences or commentary.
+
+Schema:
+{
+  "platform": "<the platform id>",
+  "selectors": {
+    "conversationList":        { "primary": "...", "fallback": "..." },
+    "conversationItem":        { "primary": "...", "fallback": "..." },
+    "conversationItemName":    { "primary": "...", "fallback": "..." },
+    "conversationItemPreview": { "primary": "...", "fallback": "..." },
+    "conversationItemLink":    { "primary": "...", "fallback": "..." },
+    "messageList":             { "primary": "...", "fallback": "..." },
+    "messageItem":             { "primary": "...", "fallback": "..." },
+    "messageBody":             { "primary": "...", "fallback": "..." },
+    "messageSenderName":       { "primary": "...", "fallback": "..." },
+    "messageTimestamp":        { "primary": "...", "fallback": "..." }
+  },
+  "rationale": "1-2 sentences"
+}`;
+
+  // Trim probe to keep token cost reasonable.
+  const probeText = buildInspectionMarkdown(probe).slice(0, 60000);
+  const userPrompt = `Platform id (if known): ${platformId || 'unknown'}
+URL: ${tab?.url || '(unknown)'}
+
+DOM probe:
+${probeText}`;
+
+  log.info('autoDetect.callStart', { platformId, urlHost: tab ? new URL(tab.url).hostname : null });
+
+  let proposed;
+  try {
+    const resp = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'anthropic-dangerous-direct-browser-access': 'true',
+      },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2000,
+        system: systemPrompt,
+        messages: [{ role: 'user', content: userPrompt }],
+      }),
+    });
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      log.error('autoDetect.apiError', { status: resp.status, body: errBody.slice(0, 500) });
+      return { error: `Claude API error ${resp.status}: ${errBody.slice(0, 200)}` };
+    }
+    const data = await resp.json();
+    const text = data.content?.[0]?.text || '';
+    // Strip code fences if Claude added them.
+    const jsonText = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    proposed = JSON.parse(jsonText);
+  } catch (err) {
+    log.error('autoDetect.exception', { reason: err.message });
+    return { error: 'Auto-detect failed: ' + err.message };
+  }
+
+  if (!proposed?.selectors) {
+    return { error: 'Claude returned no selectors block.' };
+  }
+
+  log.info('autoDetect.received', { platform: proposed.platform, keys: Object.keys(proposed.selectors).length });
+
+  // 5. Test the proposed selectors in the tab — count matches per selector.
+  let counts = {};
+  try {
+    // runs-in-tab:start
+    const testFn = (sel) => {
+      const out = {};
+      for (const [key, pair] of Object.entries(sel)) {
+        const p = (pair && pair.primary) ? document.querySelectorAll(pair.primary).length : 0;
+        const f = (pair && pair.fallback) ? document.querySelectorAll(pair.fallback).length : 0;
+        out[key] = { primary: p, fallback: f };
+      }
+      return out;
+    };
+    // runs-in-tab:end
+    const [{ result } = {}] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id, allFrames: true },
+      func: testFn,
+      args: [proposed.selectors],
+    });
+    counts = result || {};
+  } catch (err) {
+    log.warn('autoDetect.testFail', { reason: err.message });
+  }
+
+  return {
+    ok: true,
+    platform: proposed.platform || platformId,
+    selectors: proposed.selectors,
+    rationale: proposed.rationale || '',
+    counts,
+  };
 }
 
 /**
