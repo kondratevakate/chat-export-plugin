@@ -867,6 +867,14 @@ async function refreshMatchPanel(activePage) {
     els.btnProcess.disabled = true;
     els.btnProcess.title = 'Switch to the scanned tab, or click Scan to refresh from this tab.';
     els.btnSwitchTab.classList.toggle('hidden', !lastScannedTabUrl);
+  } else if (!scannedPlatform && activePlatform) {
+    // Legacy chats persisted before platform tracking landed. Don't
+    // pretend the data matches; tell the user to re-scan from the right tab.
+    els.matchPanel.classList.add('match-mismatch');
+    els.matchStatus.classList.add('match-status-mismatch');
+    els.matchStatus.textContent = 'These chats were scanned before platform tracking — re-scan from the right tab to revalidate.';
+    els.btnProcess.title = 'Re-scan from the correct tab to refresh the chat list.';
+    els.btnSwitchTab.classList.add('hidden');
   } else if (scannedPlatform === activePlatform || (!activePlatform && scannedPlatform)) {
     els.matchPanel.classList.add('match-ok');
     els.matchStatus.classList.add('match-status-ok');
@@ -1011,6 +1019,20 @@ async function onAutoDetectSelectors() {
   els.autoDetectStatus.classList.remove('hidden');
   els.autoDetectStatus.textContent = 'Sending DOM probe to Claude…';
   try {
+    // chrome.permissions.request must run in user-gesture context. Service
+    // workers don't preserve gesture state, so we request the host
+    // permission here before delegating the actual API call to the SW.
+    const hasPerm = await chrome.permissions.contains({ origins: ['https://api.anthropic.com/*'] });
+    if (!hasPerm) {
+      els.autoDetectStatus.textContent = 'Requesting permission to call Claude…';
+      const granted = await chrome.permissions.request({ origins: ['https://api.anthropic.com/*'] });
+      if (!granted) {
+        setStatus('Permission denied — Auto-detect needs network access to api.anthropic.com.', 'error');
+        els.autoDetectStatus.textContent = '❌ Host permission denied.';
+        return;
+      }
+    }
+    els.autoDetectStatus.textContent = 'Sending DOM probe to Claude…';
     const result = await sendMessage('autoDetectSelectors', {});
     if (result.error) {
       setStatus(result.error, 'error');

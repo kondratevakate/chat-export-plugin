@@ -557,16 +557,16 @@ async function autoDetectSelectors(_payload) {
     return { error: 'No Anthropic API key set. Open Advanced settings and paste a key (sk-ant-...).' };
   }
 
-  // Request the api.anthropic.com host permission on first use. We keep it
-  // OUT of host_permissions in manifest.json so the extension's default
-  // privacy claim ("data stays in your browser") holds — the user must
-  // explicitly grant network access to Claude before the call goes out.
+  // The api.anthropic.com host permission must be requested from the side
+  // panel (user-gesture context) — chrome.permissions.request from a SW
+  // throws "This function must be called during a user gesture". The side
+  // panel calls 'requestAnthropicHostPermission' before this action.
   const hasHostPerm = await chrome.permissions.contains({ origins: ['https://api.anthropic.com/*'] });
   if (!hasHostPerm) {
-    const granted = await chrome.permissions.request({ origins: ['https://api.anthropic.com/*'] });
-    if (!granted) {
-      return { error: 'Permission to call api.anthropic.com was denied. Auto-detect needs network access to Claude.' };
-    }
+    return {
+      error: 'Permission to call api.anthropic.com is required. Click "Auto-detect" again — Chrome will prompt for the host permission.',
+      needsHostPermission: true,
+    };
   }
 
   // 2. Capture current DOM probe
