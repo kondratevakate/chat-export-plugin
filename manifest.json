@@ -27,27 +27,32 @@
     {
       "matches": ["*://*.linkedin.com/messaging/*"],
       "js": ["utils/logger.js", "utils/extractor.js", "selectors.js", "content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     },
     {
       "matches": ["*://*.linkedin.com/sales/inbox/*"],
       "js": ["utils/logger.js", "utils/extractor.js", "selectors.js", "content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     },
     {
       "matches": ["*://*.instagram.com/direct/*"],
       "js": ["utils/logger.js", "utils/extractor.js", "selectors.js", "content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     },
     {
       "matches": ["*://web.whatsapp.com/*"],
       "js": ["utils/logger.js", "utils/extractor.js", "selectors.js", "content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     },
     {
       "matches": ["*://web.telegram.org/*"],
       "js": ["utils/logger.js", "utils/extractor.js", "selectors.js", "content_script.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "icons": {

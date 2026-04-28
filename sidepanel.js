@@ -349,8 +349,17 @@ async function onScanInbox() {
 
   if (result.chats && result.chats.length > 0) {
     scannedChats = result.chats;
-    chrome.storage.local.set({ scannedChats });
-    setStatus(`Found ${scannedChats.length} chats. Now select the ones you need.`, 'success');
+    // Persist the platform alongside the chats so processQueue can verify
+    // the active tab is the same kind of page (LinkedIn vs Sales Nav vs
+    // WhatsApp). Otherwise stored Sales Nav chatKeys get processed against
+    // a LinkedIn messaging tab and every extraction silently fails.
+    chrome.storage.local.set({
+      scannedChats,
+      scannedPlatform: result.platform || null,
+      scannedAt: Date.now(),
+    });
+    const platformLabel = result.platform ? ` from ${result.platform}` : '';
+    setStatus(`Found ${scannedChats.length} chats${platformLabel}. Now select the ones you need.`, 'success');
   } else {
     setStatus('No conversations found. Make sure you are on the messaging page and scroll to load chats.', 'error');
   }

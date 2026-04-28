@@ -223,7 +223,7 @@ async function startProcessing(payload) {
   // Build chatKey -> displayName map from persisted scan results so that
   // the content script can find a chat in a virtualised list (WhatsApp,
   // Telegram) without re-deriving the displayName from the slugified key.
-  const stored = await chrome.storage.local.get(['scannedChats']);
+  const stored = await chrome.storage.local.get(['scannedChats', 'scannedPlatform']);
   const chatMeta = {};
   if (stored.scannedChats && Array.isArray(stored.scannedChats)) {
     for (const c of stored.scannedChats) {
@@ -231,6 +231,23 @@ async function startProcessing(payload) {
     }
   }
   log.info('processQueue.metaLoaded', { mappedNames: Object.keys(chatMeta).length });
+
+  // Refuse to start if the active tab's platform doesn't match the platform
+  // these chats were scanned from. Otherwise we'd send Sales Nav chatKeys
+  // to a LinkedIn-messaging tab and every openChat would fail silently.
+  const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  const activePlatform = activeTab ? detectPlatformFromUrl(activeTab.url || '') : null;
+  if (stored.scannedPlatform && activePlatform && stored.scannedPlatform !== activePlatform) {
+    isProcessing = false;
+    log.error('processQueue.platformMismatch', {
+      scannedPlatform: stored.scannedPlatform,
+      activePlatform,
+      activeUrl: activeTab?.url || '',
+    });
+    return {
+      error: `Platform mismatch: your saved chats are from ${stored.scannedPlatform}, but the active tab is ${activePlatform}. Switch to the right tab and try again — or click Scan to refresh chats from this tab.`,
+    };
+  }
 
   const queue = [...runState.selectedChatKeys];
 
