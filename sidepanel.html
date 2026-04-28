@@ -28,16 +28,16 @@
         <div class="detect-recommend hidden" id="detectRecommend"></div>
         <div class="detect-url" id="detectUrl"></div>
         <div class="detect-actions">
-          <button id="btnInspect" class="btn btn-secondary half-width">Inspect this page</button>
-          <button id="btnRefreshDetect" class="btn btn-secondary half-width">Refresh</button>
+          <button id="btnInspect" class="btn btn-secondary half-width" aria-label="Diagnose the page — capture a structural DOM sample">Diagnose page</button>
+          <button id="btnRefreshDetect" class="btn btn-secondary half-width" aria-label="Refresh page detection">Refresh</button>
         </div>
       </div>
 
-      <!-- Inspection result (DOM sample for new-platform contributors). -->
+      <!-- Inspection result (page snapshot for new-platform contributors). -->
       <div id="inspectPanel" class="section hidden">
-        <label class="label">DOM sample</label>
-        <div class="hint">Paste this into a GitHub issue / Claude prompt to add support for this site. No message text — only structural hints.</div>
-        <textarea id="inspectOutput" rows="10" readonly></textarea>
+        <label class="label" for="inspectOutput">Page snapshot for support</label>
+        <div class="hint">Copy this to share with the developer when something doesn't work. It contains structure only — no message text or contact names.</div>
+        <textarea id="inspectOutput" rows="10" readonly aria-describedby="inspectHint"></textarea>
         <div class="log-actions">
           <button id="btnCopyInspect" class="btn btn-secondary half-width">Copy</button>
           <button id="btnDownloadInspect" class="btn btn-secondary half-width">Download .md</button>
@@ -136,11 +136,11 @@
 
       <!-- Progress -->
       <div id="progressPanel" class="section hidden">
-        <div id="progressBar" class="progress-bar">
+        <div id="progressBar" class="progress-bar" role="progressbar" aria-label="Extraction progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
           <div id="progressFill" class="progress-fill"></div>
         </div>
-        <div id="progressText" class="progress-text"></div>
-        <div id="progressDetails" class="progress-details"></div>
+        <div id="progressText" class="progress-text" aria-live="polite" aria-atomic="true"></div>
+        <div id="progressDetails" class="progress-details" aria-live="polite"></div>
         <div class="log-actions hidden" id="logActions">
           <button id="btnCopyLog" class="btn btn-secondary half-width">Copy log</button>
           <button id="btnDownloadLog" class="btn btn-secondary half-width">Download .txt</button>
@@ -194,8 +194,8 @@
         </div>
       </details>
 
-      <!-- Status -->
-      <div id="statusBar" class="status-bar">Ready. Start by scanning your inbox.</div>
+      <!-- Status — sticky at the bottom so errors don't scroll off-screen. -->
+      <div id="statusBar" class="status-bar" role="status" aria-live="polite" aria-atomic="true">Ready. Start by scanning your inbox.</div>
 
     </section>
   </div>

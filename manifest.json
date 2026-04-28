@@ -15,7 +15,9 @@
     "*://*.linkedin.com/*",
     "*://*.instagram.com/*",
     "*://web.whatsapp.com/*",
-    "*://web.telegram.org/*",
+    "*://web.telegram.org/*"
+  ],
+  "optional_host_permissions": [
     "https://api.anthropic.com/*"
   ],
   "background": {

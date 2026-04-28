@@ -43,7 +43,7 @@ body {
 
 .title-hint {
   font-size: 11px;
-  color: #888;
+  color: #6a6a6a;
 }
 
 /* ── Recovery card (shown after 0-messages run) ── */
@@ -101,7 +101,7 @@ body {
 }
 
 .match-label {
-  color: #666;
+  color: #555;
   flex-shrink: 0;
   width: 80px;
 }
@@ -161,7 +161,7 @@ body {
 .detect-url {
   margin-top: 4px;
   font-size: 11px;
-  color: #888;
+  color: #6a6a6a;
   word-break: break-all;
   white-space: nowrap;
   overflow: hidden;
@@ -195,7 +195,7 @@ details.advanced {
 details.advanced summary {
   cursor: pointer;
   font-size: 12px;
-  color: #666;
+  color: #555;
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.3px;
@@ -299,7 +299,7 @@ select:focus {
 
 .suggestion-item .preview {
   font-size: 11px;
-  color: #888;
+  color: #6a6a6a;
   margin-top: 2px;
   white-space: nowrap;
   overflow: hidden;
@@ -465,7 +465,7 @@ select:focus {
 
 .progress-details {
   font-size: 11px;
-  color: #888;
+  color: #6a6a6a;
   margin-top: 4px;
   max-height: 120px;
   overflow-y: auto;
@@ -479,20 +479,30 @@ select:focus {
   color: #2bb44e;
 }
 
-/* ── Status Bar ── */
+/* ── Status Bar (sticky at bottom — errors must not scroll off-screen) ── */
 .status-bar {
-  padding: 6px 10px;
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  padding: 8px 12px;
   font-size: 12px;
-  color: #555;
+  color: #444;        /* was #555 — bumped contrast to meet WCAG AA */
+  background: #fff;
+  border-top: 1px solid #e0e0e0;
   min-height: 20px;
+  z-index: 5;
 }
 
 .status-bar.error {
-  color: #c5221f;
+  color: #b71c1c;     /* was #c5221f — stronger red for AA contrast */
+  background: #ffebee;
+  border-top-color: #ef9a9a;
 }
 
 .status-bar.success {
-  color: #2bb44e;
+  color: #1b5e20;     /* was #2bb44e — stronger green for AA contrast */
+  background: #e8f5e9;
+  border-top-color: #a5d6a7;
 }
 
 /* ── Step Sections ── */
@@ -525,7 +535,7 @@ select:focus {
   height: 22px;
   border-radius: 50%;
   background: #e0e0e0;
-  color: #666;
+  color: #555;
   font-size: 12px;
   font-weight: 700;
   flex-shrink: 0;
@@ -548,7 +558,7 @@ select:focus {
 
 .hint {
   font-size: 11px;
-  color: #888;
+  color: #6a6a6a;
   margin-top: 6px;
   line-height: 1.4;
 }

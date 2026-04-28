@@ -723,7 +723,14 @@ function updateButtonStates() {
     : selectedChats.length > 0;
 
   els.btnProcess.disabled = !hasSelection;
+  els.btnProcess.title = hasSelection
+    ? ''
+    : (hasScanned ? 'Pick at least one chat in Step 2.' : 'Click Scan in Step 1 first.');
+
   els.btnDownload.disabled = !hasProcessedData;
+  els.btnDownload.title = hasProcessedData
+    ? ''
+    : 'Run extraction first — Download appears after at least one message is collected.';
 }
 
 function setStatus(text, type = '') {
@@ -961,20 +968,23 @@ function safeShortenUrl(u) {
 async function onInspectPage() {
   uiLog.info('inspect.clicked');
   els.btnInspect.disabled = true;
-  els.btnInspect.textContent = 'Inspecting…';
+  els.btnInspect.textContent = 'Diagnosing…';
   try {
     const r = await sendMessage('captureDomSample');
     if (!r || r.error) {
-      setStatus(r?.error || 'Inspection failed.', 'error');
+      setStatus(r?.error || 'Diagnose failed.', 'error');
       return;
     }
     lastInspection = r;
     els.inspectOutput.value = r.markdown || '';
     els.inspectPanel.classList.remove('hidden');
-    setStatus('DOM sample ready — copy or download below.', 'success');
+    // Move focus to the textarea so screen-reader users hear the result
+    // without having to tab back to the top.
+    els.inspectOutput.focus();
+    setStatus('Page snapshot ready — copy or download below.', 'success');
   } finally {
     els.btnInspect.disabled = false;
-    els.btnInspect.textContent = 'Inspect this page';
+    els.btnInspect.textContent = 'Diagnose page';
   }
 }
 

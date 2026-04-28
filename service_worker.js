@@ -557,6 +557,18 @@ async function autoDetectSelectors(_payload) {
     return { error: 'No Anthropic API key set. Open Advanced settings and paste a key (sk-ant-...).' };
   }
 
+  // Request the api.anthropic.com host permission on first use. We keep it
+  // OUT of host_permissions in manifest.json so the extension's default
+  // privacy claim ("data stays in your browser") holds — the user must
+  // explicitly grant network access to Claude before the call goes out.
+  const hasHostPerm = await chrome.permissions.contains({ origins: ['https://api.anthropic.com/*'] });
+  if (!hasHostPerm) {
+    const granted = await chrome.permissions.request({ origins: ['https://api.anthropic.com/*'] });
+    if (!granted) {
+      return { error: 'Permission to call api.anthropic.com was denied. Auto-detect needs network access to Claude.' };
+    }
+  }
+
   // 2. Capture current DOM probe
   const probeResult = await captureDomSample();
   if (probeResult.error) return { error: 'Could not probe page: ' + probeResult.error };
@@ -779,11 +791,33 @@ function domProbeFn() {
     .reduce((m, [k, v]) => { m[k] = v; return m; }, {});
 
   // 4c. Top aria-label values — often human-readable ("Conversation with X",
-  // "Open chat", "Post analytics"). Trim values to 60 chars to avoid PII.
+  // "Open chat", "Post analytics"). Aria-labels frequently include personal
+  // names ("Message Effie Guo", "Conversation with Sarah Mubarak") which
+  // would land in shareable Markdown reports. Filter values that look
+  // person-specific BEFORE counting, so the resulting top-N is structural.
+  const isLikelyPersonalAriaLabel = (s) => {
+    // Email or phone — definite PII.
+    if (/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/.test(s)) return true;
+    if (/\+?\d[\d\s().-]{6,}\d/.test(s)) return true;
+    // Patterns that are usually structural ("View 12 reactions", "Like",
+    // "Open menu"): keep. Patterns like "Conversation with X", "Message X",
+    // "View X's profile" embed a name → strip the name to leave the verb.
+    return false;
+  };
+  const stripNameFromAriaLabel = (s) => {
+    return s
+      .replace(/^(Conversation with|Message|Send a message to|View|Open chat with)\s+.+$/, '$1 <name>')
+      .replace(/^(.+)['’]s\s+profile.*$/, '<name>’s profile')
+      .replace(/[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/g, '<email>')
+      .replace(/\+?\d[\d\s().-]{6,}\d/g, '<phone>');
+  };
   const ariaLabels = {};
   document.querySelectorAll('[aria-label]').forEach((el) => {
-    const v = (el.getAttribute('aria-label') || '').slice(0, 60);
-    if (v) ariaLabels[v] = (ariaLabels[v] || 0) + 1;
+    let v = (el.getAttribute('aria-label') || '').slice(0, 60);
+    if (!v) return;
+    if (isLikelyPersonalAriaLabel(v)) v = stripNameFromAriaLabel(v);
+    else v = stripNameFromAriaLabel(v); // also strip name patterns from non-PII labels
+    ariaLabels[v] = (ariaLabels[v] || 0) + 1;
   });
   out.ariaLabels = Object.entries(ariaLabels)
     .sort((a, b) => b[1] - a[1])
