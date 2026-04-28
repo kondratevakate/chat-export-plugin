@@ -53,7 +53,9 @@ const PLATFORMS = {
 
 const PLATFORM_SELECTORS = {
   // ── Sales Navigator ──
-  // Selectors derived from live DOM inspection of linkedin.com/sales/inbox/
+  // Selectors derived from live DOM inspection of linkedin.com/sales/inbox/.
+  // The PR #2 attempt used [data-x--messaging-thread-list-item] which doesn't
+  // exist in the actual Sales Navigator DOM — keeping the verified set here.
   sales_navigator: {
     conversationList: {
       primary: '[role="list"]',
@@ -79,9 +81,9 @@ const PLATFORM_SELECTORS = {
       primary: 'a.conversation-list-item__link',
       fallback: 'a[href*="/sales/inbox/"]',
     },
-    // Message thread selectors (from live DOM inspection Feb 2026)
+    // Message thread selectors (from live DOM inspection Feb 2026).
     // Each message is: <li> → <article> → <div data-x-message-content="message">
-    // Sent msgs have no <address>; received msgs have <address> + <time datetime>
+    // Sent msgs have no <address>; received msgs have <address> + <time datetime>.
     messageList: {
       primary: '[role="list"]:has([data-x-message-content])',
       fallback: 'ul:has(article)',
@@ -103,7 +105,7 @@ const PLATFORM_SELECTORS = {
       fallback: 'time.t-12',
     },
     messageGroup: {
-      // Sales Navigator does NOT group messages — each is standalone
+      // Sales Navigator does NOT group messages — each is standalone.
       primary: '.sn-nonexistent-message-group',
       fallback: '.sn-nonexistent-message-group-2',
     },
@@ -114,6 +116,10 @@ const PLATFORM_SELECTORS = {
     messageScrollContainer: {
       primary: '[role="list"]:has([data-x-message-content])',
       fallback: '[role="main"] [role="list"]',
+    },
+    conversationListScrollContainer: {
+      primary: 'ul.list-style-none',
+      fallback: '[role="list"]',
     },
   },
 
@@ -174,6 +180,10 @@ const PLATFORM_SELECTORS = {
     messageScrollContainer: {
       primary: '.msg-s-message-list',
       fallback: '.msg-s-message-list-container',
+    },
+    conversationListScrollContainer: {
+      primary: '.msg-conversations-container__conversations-list',
+      fallback: '.msg-conversations-container',
     },
   },
 

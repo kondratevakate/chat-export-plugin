@@ -100,7 +100,8 @@
   }
 
   // ── Scan Inbox ──
-  // Reads the visible conversation list from the sidebar
+  // Scrolls through the conversation list, accumulating chats as LinkedIn
+  // may virtualize the list (removing DOM elements that scroll out of view).
 
   async function scanInbox() {
     log.info('scanInbox.start', { platform: platformId });
@@ -111,91 +112,96 @@
       return { error: 'Cannot find conversation list. Make sure you are on the messaging page.', selectorBroken: true };
     }
 
-    // Auto-scroll the conversation list to load more chats.
-    const scrollTarget = listContainer.closest('[style*="overflow"]')
-      || listContainer.parentElement
-      || listContainer;
+    // Accumulate chats by chatKey as we scroll — both LinkedIn and WhatsApp
+    // virtualise the chat list (DOM elements get removed as they scroll out
+    // of view), so a single end-of-scroll snapshot would miss the early
+    // entries. Map-based collection is deduplication-by-construction.
+    const chats = await scrollAndCollectChats(listContainer);
 
-    // Reset to top first so re-running Scan after a partial scroll is deterministic.
-    scrollTarget.scrollTop = 0;
-    await sleep(500);
-    if (abortFlag) return { error: 'Scan aborted', chats: [] };
-
-    let prevCount = 0;
-    let stableRounds = 0;
-    const maxScrollAttempts = 50;
-    const stableThreshold = 5;
-
-    for (let i = 0; i < maxScrollAttempts; i++) {
-      if (abortFlag) {
-        log.warn('scanInbox.aborted', { round: i });
-        break;
-      }
-
-      const currentItems = queryAllWithFallback(listContainer, SEL.conversationItem);
-      const currentCount = currentItems.length;
-      log.info('scanInbox.scroll', { round: i, count: currentCount });
-
-      if (currentCount === prevCount) {
-        stableRounds++;
-        if (stableRounds >= stableThreshold) break;
-      } else {
-        stableRounds = 0;
-      }
-      prevCount = currentCount;
-
-      scrollTarget.scrollTop = scrollTarget.scrollHeight;
-      if (currentItems.length > 0) {
-        currentItems[currentItems.length - 1].scrollIntoView({ block: 'end' });
-      }
-      await sleep(800);
-    }
-
-    let items = queryAllWithFallback(listContainer, SEL.conversationItem);
-    let usedBroadFallback = false;
-    if (items.length === 0) {
-      // Broader fallback in case the scoped container missed.
-      items = queryAllWithFallback(document, SEL.conversationItem);
-      usedBroadFallback = true;
-    }
-    if (items.length === 0) {
+    if (chats.length === 0) {
       log.error('scanInbox.empty', {
         primary: SEL.conversationItem?.primary,
         fallback: SEL.conversationItem?.fallback,
       });
       return {
-        error: 'No conversations found. Selector may need updating.',
+        error: 'No conversations found. Selector may need updating, or scroll the list first.',
         selectorBroken: true,
         chats: [],
       };
     }
 
-    const parsed = items.map(parseChatItem).filter(Boolean);
-    const beforeDedup = parsed.length;
-    let dedupResult;
-    if (typeof Extractor !== 'undefined' && Extractor.dedupeChats) {
-      dedupResult = Extractor.dedupeChats(parsed);
-    } else {
-      // Inline fallback if utility script didn't load.
-      const seen = new Set();
-      const out = [];
-      let dropped = 0;
-      for (const c of parsed) {
-        if (seen.has(c.chatKey)) { dropped++; continue; }
-        seen.add(c.chatKey);
-        out.push(c);
+    log.info('scanInbox.done', { count: chats.length, platform: platformId });
+    return { chats, platform: platformId };
+  }
+
+  async function scrollAndCollectChats(listContainer) {
+    const scrollContainer = queryWithFallback(document, SEL.conversationListScrollContainer)
+      || listContainer.closest('.msg-conversations-container')
+      || listContainer.parentElement;
+
+    // Reset to top so re-running Scan after a partial manual scroll is deterministic.
+    if (scrollContainer) scrollContainer.scrollTop = 0;
+    await sleep(300);
+
+    const collected = new Map(); // chatKey -> chat data
+    collectVisibleChats(listContainer, collected);
+
+    if (!scrollContainer) return Array.from(collected.values());
+
+    const maxAttempts = 100;
+    const scrollPause = 400;
+    const scrollStep = 300;
+    let attempts = 0;
+    let stableRounds = 0;
+    let lastCount = collected.size;
+
+    while (attempts < maxAttempts) {
+      if (abortFlag) {
+        log.warn('scanInbox.aborted', { round: attempts, collected: collected.size });
+        break;
       }
-      dedupResult = { chats: out, droppedDuplicates: dropped };
+
+      scrollContainer.scrollTop += scrollStep;
+      await sleep(scrollPause);
+
+      collectVisibleChats(listContainer, collected);
+      log.info('scanInbox.scroll', { round: attempts, collected: collected.size });
+
+      if (collected.size === lastCount) {
+        stableRounds++;
+        if (stableRounds >= 5) break;
+      } else {
+        stableRounds = 0;
+      }
+
+      lastCount = collected.size;
+      attempts++;
     }
 
-    log.info('scanInbox.done', {
-      count: dedupResult.chats.length,
-      dedupedFrom: beforeDedup,
-      dropped: dedupResult.droppedDuplicates,
-      broadFallback: usedBroadFallback,
-    });
+    // Scroll back to top for a clean state.
+    scrollContainer.scrollTop = 0;
+    return Array.from(collected.values());
+  }
 
-    return { chats: dedupResult.chats, platform: platformId };
+  function collectVisibleChats(listContainer, collected) {
+    const items = queryAllWithFallback(listContainer, SEL.conversationItem);
+    if (items.length === 0) {
+      // Fallback: broader search
+      const broadItems = queryAllWithFallback(document, SEL.conversationItem);
+      for (const el of broadItems) {
+        const chat = parseChatItem(el);
+        if (chat && !collected.has(chat.chatKey)) {
+          collected.set(chat.chatKey, chat);
+        }
+      }
+      return;
+    }
+    for (const el of items) {
+      const chat = parseChatItem(el);
+      if (chat && !collected.has(chat.chatKey)) {
+        collected.set(chat.chatKey, chat);
+      }
+    }
   }
 
   function parseChatItem(itemEl) {

@@ -116,7 +116,7 @@ async function handleMessage(message, sender) {
 
 // ── Content Script Communication ──
 
-// All URL patterns where content scripts are injected (must match manifest.json)
+// All URL patterns where content scripts are injected (must match manifest.json).
 const CONTENT_SCRIPT_PATTERNS = [
   '*://*.linkedin.com/messaging/*',
   '*://*.linkedin.com/sales/inbox/*',
@@ -126,7 +126,7 @@ const CONTENT_SCRIPT_PATTERNS = [
 ];
 
 async function getActiveTab() {
-  // Try active tabs first, then any matching tab
+  // Try active tabs first, then any matching tab.
   for (const pattern of CONTENT_SCRIPT_PATTERNS) {
     const tabs = await chrome.tabs.query({ url: pattern, active: true });
     if (tabs.length > 0) {
