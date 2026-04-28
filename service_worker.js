@@ -559,23 +559,106 @@ function domProbeFn() {
     .sort((a, b) => b.childCount - a.childCount)
     .slice(0, 10);
 
-  // 4. Sample HTML of likely list/grid/main containers.
-  const candidates = [
-    '[role="list"]', '[role="grid"]', '[role="log"]',
-    '[role="main"] [role="row"]',
-    '[role="main"]', 'main', '#main', '#pane-side',
-    '[role="feed"]',
-  ];
+  // 4a. SDUI screens — LinkedIn's new framework labels each rendered surface
+  // with a stable identifier. Tells us if the active page actually rendered
+  // messaging vs. feed (the previous capture mistakenly grabbed the feed
+  // surface from a messaging URL because the right pane dominated).
+  const sduiScreens = {};
+  document.querySelectorAll('[data-sdui-screen]').forEach((el) => {
+    const v = el.getAttribute('data-sdui-screen');
+    sduiScreens[v] = (sduiScreens[v] || 0) + 1;
+  });
+  out.sduiScreens = sduiScreens;
+
+  // 4b. Top data-testid values — modern apps deliberately expose these for
+  // testability and they survive UI redesigns better than CSS classes.
+  const testIds = {};
+  document.querySelectorAll('[data-testid]').forEach((el) => {
+    const v = el.getAttribute('data-testid');
+    testIds[v] = (testIds[v] || 0) + 1;
+  });
+  out.testIds = Object.entries(testIds)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 30)
+    .reduce((m, [k, v]) => { m[k] = v; return m; }, {});
+
+  // 4c. Top aria-label values — often human-readable ("Conversation with X",
+  // "Open chat", "Post analytics"). Trim values to 60 chars to avoid PII.
+  const ariaLabels = {};
+  document.querySelectorAll('[aria-label]').forEach((el) => {
+    const v = (el.getAttribute('aria-label') || '').slice(0, 60);
+    if (v) ariaLabels[v] = (ariaLabels[v] || 0) + 1;
+  });
+  out.ariaLabels = Object.entries(ariaLabels)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 25)
+    .reduce((m, [k, v]) => { m[k] = v; return m; }, {});
+
+  // 4d. SDUI structural componentkey values — LinkedIn assigns stable names
+  // like `com.linkedin.sdui.profile.card.Topcard` to its semantic blocks.
+  // These survive UI redesigns better than CSS classes.
+  const sduiKeys = {};
+  document.querySelectorAll('[componentkey]').forEach((el) => {
+    const v = el.getAttribute('componentkey') || '';
+    // UUIDs are not useful; only keep the structural ones.
+    if (/^com\.linkedin\./i.test(v) || /^[a-z][a-zA-Z]*\./.test(v)) {
+      // Strip any per-entity URN suffix to find the type.
+      const stem = v.split(':')[0].split('-')[0];
+      sduiKeys[stem] = (sduiKeys[stem] || 0) + 1;
+    }
+  });
+  out.sduiComponentKeys = Object.entries(sduiKeys)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .reduce((m, [k, v]) => { m[k] = v; return m; }, {});
+
+  // 4e. Sample HTML — every [role="main"] + structural anchors. Snippets up
+  // to 5000 chars (the previous 1500 was too short — LinkedIn SDUI pages
+  // are 400-500 KB and the topcard alone fills 1500 chars).
+  const SNIPPET_MAX = 5000;
   out.samples = [];
-  for (const sel of candidates) {
+  document.querySelectorAll('[role="main"]').forEach((el, idx) => {
+    out.samples.push({
+      selector: `[role="main"] (instance ${idx + 1})`,
+      sduiScreen: el.getAttribute('data-sdui-screen') || null,
+      id: el.id || null,
+      fullLength: el.outerHTML.length,
+      snippet: el.outerHTML.slice(0, SNIPPET_MAX),
+    });
+  });
+
+  // Sample around "interesting" SDUI components — feed updates (posts),
+  // messaging surfaces, profile cards. Lets us see the shape of a single
+  // post/message/card without scrolling the dump.
+  const interestingPatterns = ['feed.update', 'message', 'thread', 'post', 'analytic', 'reactions'];
+  for (const pattern of interestingPatterns) {
+    if (out.samples.length >= 8) break;
+    const el = document.querySelector(`[componentkey*="${pattern}"]`);
+    if (el && !out.samples.some((s) => s.fullLength === el.outerHTML.length)) {
+      out.samples.push({
+        selector: `[componentkey*="${pattern}"]`,
+        componentKey: el.getAttribute('componentkey'),
+        fullLength: el.outerHTML.length,
+        snippet: el.outerHTML.slice(0, SNIPPET_MAX),
+      });
+    }
+  }
+
+  // Also pick a few list-shaped containers if not already sampled.
+  const moreCandidates = [
+    '[data-testid="lazy-column"]',
+    '[role="list"]', '[role="grid"]', '[role="log"]', '[role="feed"]',
+    '#pane-side', '#main',
+  ];
+  for (const sel of moreCandidates) {
+    if (out.samples.length >= 10) break;
     const el = document.querySelector(sel);
     if (el && !out.samples.some((s) => s.fullLength === el.outerHTML.length)) {
       out.samples.push({
         selector: sel,
         fullLength: el.outerHTML.length,
-        snippet: el.outerHTML.slice(0, 1500),
+        snippet: el.outerHTML.slice(0, SNIPPET_MAX),
       });
-      if (out.samples.length >= 4) break;
     }
   }
 
@@ -615,6 +698,38 @@ function buildInspectionMarkdown(probe) {
   for (const [r, n] of roles) lines.push(`- \`${r}\`: ${n}`);
   lines.push('');
 
+  if (probe.sduiScreens && Object.keys(probe.sduiScreens).length) {
+    lines.push('## SDUI screens rendered (LinkedIn-specific)');
+    for (const [k, v] of Object.entries(probe.sduiScreens)) {
+      lines.push(`- \`${k}\`: ${v}`);
+    }
+    lines.push('');
+  }
+
+  if (probe.sduiComponentKeys && Object.keys(probe.sduiComponentKeys).length) {
+    lines.push('## SDUI componentkey stems (top 20)');
+    for (const [k, v] of Object.entries(probe.sduiComponentKeys)) {
+      lines.push(`- \`${k}\`: ${v}`);
+    }
+    lines.push('');
+  }
+
+  if (probe.testIds && Object.keys(probe.testIds).length) {
+    lines.push('## Top data-testid values (top 30)');
+    for (const [k, v] of Object.entries(probe.testIds)) {
+      lines.push(`- \`${k}\`: ${v}`);
+    }
+    lines.push('');
+  }
+
+  if (probe.ariaLabels && Object.keys(probe.ariaLabels).length) {
+    lines.push('## Top aria-label patterns (top 25, truncated to 60 chars)');
+    for (const [k, v] of Object.entries(probe.ariaLabels)) {
+      lines.push(`- \`${k}\`: ${v}`);
+    }
+    lines.push('');
+  }
+
   lines.push('## Common data-* attributes (top 30)');
   for (const [k, v] of Object.entries(probe.dataAttrs || {})) {
     lines.push(`- \`${k}\`: ${v}`);
@@ -639,7 +754,12 @@ function buildInspectionMarkdown(probe) {
 
   lines.push('## Sample HTML');
   (probe.samples || []).forEach((s) => {
-    lines.push(`### \`${s.selector}\` (full length: ${s.fullLength})`);
+    const meta = [];
+    if (s.sduiScreen) meta.push(`sdui-screen="${s.sduiScreen}"`);
+    if (s.componentKey) meta.push(`componentkey="${s.componentKey}"`);
+    if (s.id) meta.push(`id="${s.id}"`);
+    const metaStr = meta.length ? ` ${meta.join(' ')}` : '';
+    lines.push(`### \`${s.selector}\`${metaStr} (full length: ${s.fullLength})`);
     lines.push('```html');
     lines.push(s.snippet);
     lines.push('```');
