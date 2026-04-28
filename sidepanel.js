@@ -708,6 +708,7 @@ async function refreshDetectBanner() {
   const r = await sendMessage('inspectActiveTab');
   if (!r || r.error) {
     setDetectBanner({ icon: '❓', message: r?.error || 'Could not read active tab.', recommend: '', url: '', state: 'unsupported' });
+    applyPageMode(null);
     return;
   }
   let icon, state;
@@ -721,6 +722,59 @@ async function refreshDetectBanner() {
     url: r.url || '',
     state,
   });
+  applyPageMode(r);
+}
+
+/**
+ * Switch the Step-1 wording and the workflow availability based on what
+ * page the user is on. Keeps the same pipeline (scan → pick → process →
+ * download) but tells the user what each step will scrape.
+ */
+function applyPageMode(pageInfo) {
+  const scanBtn = els.btnScan;
+  const scanHint = els.scanHint;
+  const stepLabel = scanBtn?.closest('.step-section')?.querySelector('.step-label');
+
+  if (!pageInfo || pageInfo.ready !== true) {
+    // Not a scrapable page — disable Step 1 and explain why.
+    scanBtn.disabled = true;
+    scanBtn.textContent = 'Scan (no extractor for this page)';
+    if (scanHint) {
+      scanHint.textContent = pageInfo?.recommend
+        || 'Open a supported messaging tab (LinkedIn, Sales Navigator, WhatsApp Web), then this button activates.';
+    }
+    if (stepLabel) stepLabel.textContent = 'Scan inbox';
+    return;
+  }
+
+  // Page-specific button label and hint.
+  const t = pageInfo.pageType;
+  if (t === 'sales_inbox') {
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Scan Sales Navigator inbox';
+    if (stepLabel) stepLabel.textContent = 'Scan inbox';
+    if (scanHint) scanHint.textContent = 'Reads your conversation list and clicks "Load older conversations" to get the long tail.';
+  } else if (t === 'whatsapp_web') {
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Scan WhatsApp chats';
+    if (stepLabel) stepLabel.textContent = 'Scan chat list';
+    if (scanHint) scanHint.textContent = 'Reads your chat list. WhatsApp virtualises — we accumulate chats while scrolling.';
+  } else if (t === 'telegram_web') {
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Scan Telegram chats';
+    if (stepLabel) stepLabel.textContent = 'Scan chat list';
+    if (scanHint) scanHint.textContent = 'Selectors are scaffolded but untested on current Telegram Web. If 0 chats, click Inspect.';
+  } else if (t === 'instagram_dms') {
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Scan Instagram DMs';
+    if (stepLabel) stepLabel.textContent = 'Scan DMs';
+    if (scanHint) scanHint.textContent = 'Selectors are scaffolded but untested on current Instagram. If 0 chats, click Inspect.';
+  } else {
+    scanBtn.disabled = false;
+    scanBtn.textContent = 'Scan Inbox';
+    if (stepLabel) stepLabel.textContent = 'Scan inbox';
+    if (scanHint) scanHint.textContent = pageInfo.recommend || '';
+  }
 }
 
 function setDetectBanner({ icon, message, recommend, url, state }) {

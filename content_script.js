@@ -169,6 +169,18 @@
 
       if (collected.size === lastCount) {
         stableRounds++;
+        // After 3 stable rounds with no growth, try clicking the "Load older
+        // conversations" button before giving up — Sales Navigator and
+        // WhatsApp both have one, and without it we miss the long tail.
+        if (stableRounds === 3) {
+          if (await tryLoadOlderConversations()) {
+            log.info('scanInbox.loadOlder', { round: attempts });
+            await sleep(800);
+            // Reset stable counter so we keep scrolling after the older
+            // conversations begin to render.
+            stableRounds = 0;
+          }
+        }
         if (stableRounds >= 5) break;
       } else {
         stableRounds = 0;
@@ -178,9 +190,38 @@
       attempts++;
     }
 
+    // One more click + scroll pass at the end to catch trailing items.
+    if (await tryLoadOlderConversations()) {
+      await sleep(800);
+      collectVisibleChats(listContainer, collected);
+    }
+
     // Scroll back to top for a clean state.
     scrollContainer.scrollTop = 0;
     return Array.from(collected.values());
+  }
+
+  /**
+   * Click the "Load older conversations" button if it's present and visible.
+   * Sales Navigator inbox renders this at the bottom of the list; without
+   * clicking it we cap the scan at whatever is initially loaded.
+   * Returns true if the click happened.
+   */
+  async function tryLoadOlderConversations() {
+    const candidates = [
+      '[aria-label="Load older conversations"]',
+      '[aria-label*="Load older conversation"]',
+      '[aria-label*="Load more"]',
+      'button[data-control-name*="load_more"]',
+      'button[data-control-name*="loadMore"]',
+    ];
+    for (const sel of candidates) {
+      const btn = document.querySelector(sel);
+      if (btn && !btn.disabled && btn.offsetParent !== null) {
+        try { btn.click(); return true; } catch { /* ignore */ }
+      }
+    }
+    return false;
   }
 
   function collectVisibleChats(listContainer, collected) {
