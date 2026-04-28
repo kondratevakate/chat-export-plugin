@@ -107,12 +107,20 @@ async function handleMessage(message, sender) {
       return autoDetectSelectors(payload);
 
     case 'setApiKey':
-      await chrome.storage.local.set({ anthropicApiKey: payload?.apiKey || '' });
+      // Use chrome.storage.session — memory-only, cleared on browser close.
+      // The previous chrome.storage.local persisted the key unencrypted to
+      // disk, which violates the "no data leaves your browser" promise the
+      // moment the laptop is shared, sync'd, or imaged. Session storage is
+      // the right tradeoff: re-enter once per browser session, but never
+      // sits in a file.
+      await chrome.storage.session.set({ anthropicApiKey: payload?.apiKey || '' });
+      // Clean up any leaked legacy copy.
+      await chrome.storage.local.remove(['anthropicApiKey']);
       return { ok: true };
 
     case 'getApiKey':
       return new Promise((resolve) => {
-        chrome.storage.local.get(['anthropicApiKey'], (r) => resolve({ apiKey: r.anthropicApiKey || '' }));
+        chrome.storage.session.get(['anthropicApiKey'], (r) => resolve({ apiKey: r.anthropicApiKey || '' }));
       });
 
     case 'getLog':
@@ -323,7 +331,15 @@ async function processQueue(queue, settings, chatMeta) {
           return;
         }
       } else if (result.messages) {
-        // Apply date filters in the SW (content script doesn't know dates).
+        // Cancel-race guard: extractChat may have completed AFTER the user
+        // clicked Cancel. Don't append to extractedMessages in that case —
+        // the partial run is still useful (downloadable) but we don't want
+        // a chat the user explicitly cancelled to land in the CSV.
+        if (!isProcessing) {
+          log.warn('processQueue.cancelRace', { chatKey, dropped: result.messages.length });
+          broadcastProgress({ status: 'cancelled' });
+          return;
+        }
         const filtered = filterMessages(result.messages, settings);
         extractedMessages.push(...filtered);
         runState.processedChatKeys.push(chatKey);
@@ -532,9 +548,9 @@ function slugifyHost(url) {
 // another iteration if the first try misses.
 
 async function autoDetectSelectors(_payload) {
-  // 1. Get API key
+  // 1. Get API key (session storage — memory only)
   const stored = await new Promise((resolve) =>
-    chrome.storage.local.get(['anthropicApiKey'], resolve)
+    chrome.storage.session.get(['anthropicApiKey'], resolve)
   );
   const apiKey = stored.anthropicApiKey;
   if (!apiKey) {

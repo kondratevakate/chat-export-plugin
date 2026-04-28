@@ -94,20 +94,30 @@
       <div class="section step-section">
         <div class="step-header">
           <span class="step-num" id="stepNum3">3</span>
-          <label class="label step-label">Run extraction</label>
+          <label class="label step-label">Extract messages</label>
         </div>
+
+        <!-- Pre-flight match panel: surfaces "scanned X · active tab Y" so a
+             platform mismatch is visible BEFORE the user clicks Extract. -->
+        <div id="matchPanel" class="match-panel hidden">
+          <div class="match-row"><span class="match-label">Scanned:</span> <span id="matchScanned">—</span></div>
+          <div class="match-row"><span class="match-label">Active tab:</span> <span id="matchActive">—</span></div>
+          <div class="match-status" id="matchStatus"></div>
+          <button id="btnSwitchTab" class="btn btn-secondary full-width hidden">Switch to scanned tab</button>
+        </div>
+
         <div class="hint">
-          <strong>Test run</strong> grabs ~3 most recent messages per chat — fast sanity check.
-          <strong>Full</strong> walks the whole conversation in the date range — slower.
+          <strong>Quick check</strong> grabs ~3 newest messages per chat (~1 min for 50 chats).
+          <strong>Full export</strong> walks every message in your date range — slower.
         </div>
         <div class="mode-row">
           <label class="radio-label">
             <input type="radio" name="extractMode" value="test" checked />
-            Test run (3 messages per chat)
+            Quick check (3 messages each)
           </label>
           <label class="radio-label">
             <input type="radio" name="extractMode" value="full" />
-            Full conversation
+            Full export
           </label>
         </div>
         <div class="date-row">
@@ -120,7 +130,7 @@
             <input type="date" id="dateTo" />
           </div>
         </div>
-        <button id="btnProcess" class="btn btn-secondary full-width" disabled>Process Selected Chats</button>
+        <button id="btnProcess" class="btn btn-secondary full-width" disabled>Extract messages</button>
         <button id="btnCancel" class="btn btn-danger full-width hidden">Cancel</button>
       </div>
 

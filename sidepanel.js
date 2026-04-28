@@ -61,6 +61,11 @@ const els = {
   btnAutoDetect: $('#btnAutoDetect'),
   autoDetectStatus: $('#autoDetectStatus'),
   anthropicApiKey: $('#anthropicApiKey'),
+  matchPanel: $('#matchPanel'),
+  matchScanned: $('#matchScanned'),
+  matchActive: $('#matchActive'),
+  matchStatus: $('#matchStatus'),
+  btnSwitchTab: $('#btnSwitchTab'),
 };
 
 let lastInspection = null; // { markdown, filename, sample }
@@ -166,6 +171,7 @@ function bindEvents() {
   els.btnCopyInspect.addEventListener('click', onCopyInspection);
   els.btnDownloadInspect.addEventListener('click', onDownloadInspection);
   els.btnAutoDetect.addEventListener('click', onAutoDetectSelectors);
+  els.btnSwitchTab.addEventListener('click', onSwitchToScannedTab);
   // Persist API key on blur so user doesn't have to click Save.
   els.anthropicApiKey.addEventListener('change', onSaveApiKey);
   els.anthropicApiKey.addEventListener('blur', onSaveApiKey);
@@ -366,10 +372,19 @@ async function onScanInbox() {
     // the active tab is the same kind of page (LinkedIn vs Sales Nav vs
     // WhatsApp). Otherwise stored Sales Nav chatKeys get processed against
     // a LinkedIn messaging tab and every extraction silently fails.
+    // Capture the URL of the scanned tab so the mismatch panel can offer a
+    // "Switch back" button if the user navigates away.
+    let scannedUrl = '';
+    try {
+      const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      scannedUrl = activeTab?.url || '';
+    } catch { /* tabs perm denied or no active tab */ }
+
     chrome.storage.local.set({
       scannedChats,
       scannedPlatform: result.platform || null,
       scannedAt: Date.now(),
+      lastScannedUrl: scannedUrl,
     });
     const platformLabel = result.platform ? ` from ${result.platform}` : '';
     setStatus(`Found ${scannedChats.length} chats${platformLabel}. Now select the ones you need.`, 'success');
@@ -617,14 +632,61 @@ function updateProgress(data) {
     if (hasProcessedData) {
       setStatus(`${msgCount} messages ready. Choose format and click Download.`, 'success');
     } else {
-      setStatus('0 messages extracted. Running diagnostics...', 'error');
+      // 0 messages — surface a recovery card BEFORE the technical diagnostics
+      // dump. Most users don't want to read DOM HTML; they want a button to
+      // press. The technical details remain available below.
+      showZeroMessagesRecovery();
+      setStatus('No messages found — the page layout may have changed.', 'error');
       runAndShowDiagnostics();
     }
   } else if (data.status === 'cancelled') {
-    els.progressText.textContent = 'Cancelled';
+    // Show partial results so the user knows their work isn't lost.
+    if (msgCount > 0) {
+      els.progressText.textContent = `Cancelled — ${msgCount} messages from ${data.processed} chats are saved.`;
+      hasProcessedData = true;
+      els.btnDownload.disabled = false;
+      setStatus(`Cancelled. ${msgCount} messages saved — Download is below.`, 'success');
+    } else {
+      els.progressText.textContent = 'Cancelled — no messages extracted.';
+      setStatus('Processing cancelled. Log available for download.', 'error');
+    }
     finishRunUI();
-    setStatus('Processing cancelled. Log available for download.', 'error');
   }
+}
+
+function showZeroMessagesRecovery() {
+  // Insert a recovery card at the top of progressDetails before the auto
+  // diagnostics dump. Primary CTA: try Auto-fix with Claude.
+  const card = document.createElement('div');
+  card.className = 'recovery-card';
+  card.innerHTML = `
+    <div class="recovery-title">⚠️ No messages found on this page</div>
+    <div class="recovery-body">The site's layout may have changed since this extractor was last verified. Try one of:</div>
+    <div class="recovery-actions"></div>
+  `;
+  const actions = card.querySelector('.recovery-actions');
+
+  const autoFixBtn = document.createElement('button');
+  autoFixBtn.className = 'btn btn-primary half-width';
+  autoFixBtn.textContent = '🤖 Auto-fix with Claude';
+  autoFixBtn.addEventListener('click', () => {
+    // Surface the inspect panel + auto-detect button to the user.
+    onInspectPage().then(() => {
+      els.btnAutoDetect?.scrollIntoView({ block: 'center' });
+    });
+  });
+  actions.appendChild(autoFixBtn);
+
+  const diagnoseBtn = document.createElement('button');
+  diagnoseBtn.className = 'btn btn-secondary half-width';
+  diagnoseBtn.textContent = 'Show technical details';
+  diagnoseBtn.addEventListener('click', () => {
+    els.progressDetails.scrollTop = els.progressDetails.scrollHeight;
+  });
+  actions.appendChild(diagnoseBtn);
+
+  // Insert at top of progress details.
+  els.progressDetails.insertBefore(card, els.progressDetails.firstChild);
 }
 
 function finishRunUI() {
@@ -733,18 +795,105 @@ async function refreshDetectBanner() {
     applyPageMode(null);
     return;
   }
-  let icon, state;
-  if (r.ready === true) { icon = '🟢'; state = 'supported'; }
-  else if (r.ready === false) { icon = '⚠️'; state = 'unsupported'; }
-  else { icon = '❓'; state = 'unsupported'; }
+  // Text prefix in addition to the icon — color-only signals exclude
+  // colorblind users and don't survive in screen-reader output.
+  let icon, state, prefix;
+  if (r.ready === true) { icon = '🟢'; state = 'supported'; prefix = 'Ready: '; }
+  else if (r.ready === false) { icon = '⚠️'; state = 'unsupported'; prefix = 'Not supported: '; }
+  else { icon = '❓'; state = 'unsupported'; prefix = 'Unknown: '; }
   setDetectBanner({
     icon,
-    message: r.pageLabel || 'Unknown page',
+    message: prefix + (r.pageLabel || 'Unknown page'),
     recommend: r.recommend || '',
     url: r.url || '',
     state,
   });
   applyPageMode(r);
+  refreshMatchPanel(r);
+}
+
+let lastScannedTabUrl = '';
+
+/**
+ * Show "scanned X chats from PLATFORM_A · active tab is PLATFORM_B" so a
+ * mismatch is visible BEFORE the user clicks Extract. The bug we're guarding
+ * against: user scans on Sales Nav, navigates to LinkedIn messaging in the
+ * same window, clicks Extract, all 20 chats fail silently because their
+ * chatKeys are Sales Nav URNs that don't exist on the messaging page.
+ */
+async function refreshMatchPanel(activePage) {
+  const stored = await new Promise((resolve) => {
+    chrome.storage.local.get(['scannedChats', 'scannedPlatform', 'scannedAt', 'lastScannedUrl'], resolve);
+  });
+  const scannedCount = stored.scannedChats?.length || 0;
+  const scannedPlatform = stored.scannedPlatform;
+  lastScannedTabUrl = stored.lastScannedUrl || '';
+
+  if (!scannedCount) {
+    els.matchPanel.classList.add('hidden');
+    return;
+  }
+
+  els.matchPanel.classList.remove('hidden');
+
+  // Format the "scanned" line.
+  let scannedLine = `${scannedCount} chats`;
+  if (scannedPlatform) scannedLine += ` from ${platformLabelFor(scannedPlatform)}`;
+  if (stored.scannedAt) {
+    const mins = Math.round((Date.now() - stored.scannedAt) / 60000);
+    scannedLine += mins < 1 ? ' · just now' : ` · ${mins} min ago`;
+  }
+  els.matchScanned.textContent = scannedLine;
+
+  // Active tab line.
+  els.matchActive.textContent = activePage?.pageLabel || 'Unknown';
+
+  // Match logic.
+  const activePlatform = activePage?.platformId;
+  els.matchPanel.classList.remove('match-ok', 'match-mismatch');
+  els.matchStatus.classList.remove('match-status-ok', 'match-status-mismatch');
+
+  if (activePlatform && scannedPlatform && activePlatform !== scannedPlatform) {
+    els.matchPanel.classList.add('match-mismatch');
+    els.matchStatus.classList.add('match-status-mismatch');
+    els.matchStatus.textContent = `Mismatch: chats are from ${platformLabelFor(scannedPlatform)} but you're on ${platformLabelFor(activePlatform)}.`;
+    els.btnProcess.disabled = true;
+    els.btnProcess.title = 'Switch to the scanned tab, or click Scan to refresh from this tab.';
+    els.btnSwitchTab.classList.toggle('hidden', !lastScannedTabUrl);
+  } else if (scannedPlatform === activePlatform || (!activePlatform && scannedPlatform)) {
+    els.matchPanel.classList.add('match-ok');
+    els.matchStatus.classList.add('match-status-ok');
+    els.matchStatus.textContent = '✓ Same platform — ready to extract.';
+    els.btnProcess.title = '';
+    els.btnSwitchTab.classList.add('hidden');
+    // Re-enable process if it was disabled by mismatch (selection check below
+    // will disable it again if no chats are picked).
+    updateButtonStates();
+  } else {
+    els.matchStatus.textContent = '';
+    els.btnSwitchTab.classList.add('hidden');
+  }
+}
+
+function platformLabelFor(id) {
+  const map = {
+    sales_navigator: 'Sales Navigator',
+    linkedin: 'LinkedIn Messaging',
+    whatsapp: 'WhatsApp Web',
+    telegram: 'Telegram Web',
+    instagram: 'Instagram DMs',
+  };
+  return map[id] || id;
+}
+
+async function onSwitchToScannedTab() {
+  if (!lastScannedTabUrl) return;
+  const tabs = await chrome.tabs.query({ url: lastScannedTabUrl + '*' });
+  if (tabs.length) {
+    chrome.tabs.update(tabs[0].id, { active: true });
+  } else {
+    chrome.tabs.create({ url: lastScannedTabUrl });
+  }
 }
 
 /**
