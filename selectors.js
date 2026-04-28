@@ -195,22 +195,30 @@ const PLATFORM_SELECTORS = {
     messageScrollContainer: { primary: '[role="grid"]', fallback: '._aacp' },
   },
 
-  // ── WhatsApp Web (placeholder — fill when implementing) ──
+  // ── WhatsApp Web ──
+  // Conversation-list selectors are scoped to #pane-side (the left rail) so they
+  // do NOT pick up [role="listitem"] elements from the open chat or other
+  // surfaces. WhatsApp dropped data-testid in 2024-2025; we use semantic roles
+  // and structural fallbacks. Message-side selectors are best-effort and
+  // intended to be revisited from a live DOM diagnose run.
   whatsapp: {
-    conversationList: { primary: '[role="listitem"]', fallback: '#pane-side [role="grid"]' },
-    conversationItem: { primary: '[role="listitem"]', fallback: '[data-testid="cell-frame-container"]' },
-    conversationItemName: { primary: '[data-testid="cell-frame-title"] span', fallback: 'span[dir="auto"]' },
-    conversationItemPreview: { primary: '[data-testid="last-msg-status"] span', fallback: 'span[dir="ltr"]' },
-    conversationItemTime: { primary: '[data-testid="cell-frame-primary-detail"]', fallback: 'div._ak8i' },
-    conversationItemLink: { primary: '[role="listitem"]', fallback: '[data-testid="cell-frame-container"]' },
-    messageList: { primary: '[role="application"]', fallback: '#main [data-testid="conversation-panel-messages"]' },
-    messageItem: { primary: '[data-testid="msg-container"]', fallback: '.message-in, .message-out' },
-    messageSenderName: { primary: '[data-testid="msg-meta"] span', fallback: 'span[dir="auto"]' },
-    messageBody: { primary: '[data-testid="msg-container"] span.selectable-text', fallback: 'span.selectable-text' },
-    messageTimestamp: { primary: '[data-testid="msg-meta"]', fallback: 'span[dir="auto"]' },
-    messageGroup: { primary: 'div', fallback: 'div' },
-    messageGroupMeta: { primary: 'div', fallback: 'div' },
-    messageScrollContainer: { primary: '[data-testid="conversation-panel-body"]', fallback: '#main .copyable-area' },
+    // Selectors verified 2026-04-28 from a live diagnose run. WhatsApp Web
+    // uses [role="row"] for chat-list items (not "listitem") and exposes
+    // sender + timestamp inside `data-pre-plain-text` on each message.
+    conversationList: { primary: '#pane-side div[role="grid"]', fallback: '#pane-side [aria-label]' },
+    conversationItem: { primary: '#pane-side div[role="row"]', fallback: '#pane-side [role="listitem"]' },
+    conversationItemName: { primary: 'span[title]', fallback: 'span[dir="auto"][title]' },
+    conversationItemPreview: { primary: 'span[dir="ltr"]', fallback: 'span[dir="auto"]:nth-of-type(2)' },
+    conversationItemTime: { primary: 'div._ak8i', fallback: 'span[aria-hidden="true"]' },
+    conversationItemLink: { primary: 'div[role="row"]', fallback: 'div[role="listitem"]' },
+    messageList: { primary: '#main .copyable-area', fallback: '#main' },
+    messageItem: { primary: '#main div.message-in, #main div.message-out', fallback: '#main [role="row"]' },
+    messageSenderName: { primary: 'span[aria-label]', fallback: 'span[dir="auto"]' },
+    messageBody: { primary: 'span.copyable-text', fallback: 'div.copyable-text > span' },
+    messageTimestamp: { primary: 'div[data-pre-plain-text]', fallback: 'span[aria-hidden="true"]' },
+    messageGroup: { primary: '#main div.message-in, #main div.message-out', fallback: '#main [role="row"]' },
+    messageGroupMeta: { primary: 'div[data-pre-plain-text]', fallback: 'span.copyable-text' },
+    messageScrollContainer: { primary: '#main .copyable-area', fallback: '#main' },
   },
 
   // ── Telegram Web (placeholder — fill when implementing) ──

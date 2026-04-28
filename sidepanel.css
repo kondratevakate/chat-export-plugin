@@ -20,7 +20,7 @@ body {
   min-height: 100vh;
 }
 
-/* ── Header / Tabs ── */
+/* ── Header (single-flow, no tabs) ── */
 .header {
   background: #fff;
   border-bottom: 1px solid #e0e0e0;
@@ -29,31 +29,47 @@ body {
   z-index: 10;
 }
 
-.tabs {
+.title-bar {
+  padding: 10px 12px;
   display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.tab {
-  flex: 1;
-  padding: 12px 8px;
-  border: none;
-  background: #f5f5f5;
-  color: #666;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-  border-bottom: 3px solid transparent;
-  transition: all 0.15s;
-}
-
-.tab:hover {
-  background: #eee;
-}
-
-.tab.active {
-  background: #fff;
+.title-bar strong {
+  font-size: 14px;
   color: #0a66c2;
-  border-bottom-color: #0a66c2;
+}
+
+.title-hint {
+  font-size: 11px;
+  color: #888;
+}
+
+/* ── Advanced collapsible ── */
+details.advanced {
+  margin-top: 16px;
+  border-top: 1px dashed #ddd;
+  padding-top: 12px;
+}
+
+details.advanced summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: #666;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: 4px 0;
+  user-select: none;
+}
+
+details.advanced summary:hover {
+  color: #0a66c2;
+}
+
+details.advanced[open] summary {
+  margin-bottom: 8px;
 }
 
 /* ── Tab Content ── */
@@ -260,6 +276,16 @@ select:focus {
 
 .full-width {
   width: 100%;
+}
+
+.half-width {
+  flex: 1;
+}
+
+.log-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
 }
 
 .actions {

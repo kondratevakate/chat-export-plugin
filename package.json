@@ -1,0 +1,15 @@
+{
+  "name": "chat-export-plugin",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Chrome extension that exports messaging chats to CSV. Tests cover the parts most likely to break — selectors, abort flow, mode-based extraction, log buffer.",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:legacy": "node tests/test_anonymize.js && node tests/test_csv.js"
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9",
+    "jsdom": "^25.0.1"
+  }
+}

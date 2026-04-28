@@ -4,7 +4,7 @@
  * Manages state, user interactions, and communication with service worker.
  */
 
-/* global CSVBuilder, Anonymize, Redact */
+/* global CSVBuilder, Anonymize, Redact, Logger */
 
 // ── State ──
 let scannedChats = [];       // ChatIndexItem[]
@@ -12,6 +12,9 @@ let selectedChats = [];      // ChatIndexItem[]
 let excludedChats = [];      // ChatIndexItem[]
 let currentMode = 'selected'; // 'selected' | 'exclude'
 let hasProcessedData = false; // true after successful processing
+let isProcessingLocal = false; // mirrors SW state for settings-lock UX
+
+const uiLog = (typeof Logger !== 'undefined' ? Logger.logFor('ui') : { info: console.log, warn: console.warn, error: console.error });
 
 // ── DOM Refs ──
 const $ = (sel) => document.querySelector(sel);
@@ -36,12 +39,14 @@ const els = {
   statusBar: $('#statusBar'),
   scanHint: $('#scanHint'),
   senderName: $('#senderName'),
-  messagesPerChat: $('#messagesPerChat'),
   rowMode: $('#rowMode'),
   redactPII: $('#redactPII'),
   btnCancel: $('#btnCancel'),
   btnSaveSettings: $('#btnSaveSettings'),
   btnClearData: $('#btnClearData'),
+  btnDownloadLog: $('#btnDownloadLog'),
+  btnCopyLog: $('#btnCopyLog'),
+  logActions: $('#logActions'),
 };
 
 // Step sections (for highlighting)
@@ -62,11 +67,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const settings = await sendMessage('getSettings');
   if (settings && !settings.error) {
     els.senderName.value = settings.senderName || 'Kate Kondrateva';
-    els.messagesPerChat.value = settings.messagesPerChat || 8;
     els.rowMode.value = settings.rowMode || 'message';
     els.redactPII.checked = settings.redactPII !== false;
     if (settings.dateFrom) els.dateFrom.value = settings.dateFrom;
     if (settings.dateTo) els.dateTo.value = settings.dateTo;
+    const wantedMode = settings.extractMode === 'full' ? 'full' : 'test';
+    const radio = document.querySelector(`input[name="extractMode"][value="${wantedMode}"]`);
+    if (radio) radio.checked = true;
   }
 
   // Load persisted scanned chats
@@ -93,16 +100,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 // ── Event Bindings ──
 
 function bindEvents() {
-  // Tabs
-  $$('.tab').forEach(tab => {
-    tab.addEventListener('click', () => {
-      $$('.tab').forEach(t => t.classList.remove('active'));
-      $$('.tab-content').forEach(tc => tc.classList.remove('active'));
-      tab.classList.add('active');
-      $(`#tab-${tab.dataset.tab}`).classList.add('active');
-    });
-  });
-
   // Mode toggle
   $$('input[name="mode"]').forEach(radio => {
     radio.addEventListener('change', () => {
@@ -127,6 +124,8 @@ function bindEvents() {
   els.btnProcess.addEventListener('click', onProcessQueue);
   els.btnCancel.addEventListener('click', onCancel);
   els.btnDownload.addEventListener('click', onDownload);
+  els.btnDownloadLog.addEventListener('click', onDownloadLog);
+  els.btnCopyLog.addEventListener('click', onCopyLog);
 
   // Settings
   els.btnSaveSettings.addEventListener('click', onSaveSettings);
@@ -335,7 +334,6 @@ async function onProcessQueue() {
 
   let queue;
   if (currentMode === 'exclude') {
-    // Process all scanned except excluded
     const excludeSet = new Set(excludedChats.map(c => c.chatKey));
     queue = scannedChats.filter(c => !excludeSet.has(c.chatKey)).map(c => c.chatKey);
   } else {
@@ -347,12 +345,26 @@ async function onProcessQueue() {
     return;
   }
 
+  uiLog.info('process.start', { count: queue.length, mode: settings.extractMode });
+
+  // Reset the log buffer for a fresh run so the downloadable file matches
+  // exactly this run.
+  if (typeof Logger !== 'undefined' && Logger.buffer) {
+    Logger.buffer.clear();
+  }
+
   // Show progress and cancel button
   els.progressPanel.classList.remove('hidden');
   els.progressDetails.innerHTML = '';
   els.btnProcess.disabled = true;
   els.btnProcess.classList.add('hidden');
   els.btnCancel.classList.remove('hidden');
+  els.btnCancel.disabled = false;
+  els.btnCancel.textContent = 'Cancel';
+  els.logActions.classList.add('hidden');
+
+  setSettingsLocked(true);
+  isProcessingLocal = true;
 
   const result = await sendMessage('processQueue', {
     selectedChatKeys: queue,
@@ -362,8 +374,16 @@ async function onProcessQueue() {
   });
 
   if (result.error) {
-    setStatus(result.error, 'error');
+    if (result.error === 'Already processing') {
+      setStatus('A run is already in progress — click Cancel first.', 'error');
+    } else {
+      setStatus(result.error, 'error');
+    }
+    setSettingsLocked(false);
+    isProcessingLocal = false;
     els.btnProcess.disabled = false;
+    els.btnProcess.classList.remove('hidden');
+    els.btnCancel.classList.add('hidden');
     els.btnProcess.textContent = 'Process Selected Chats';
     return;
   }
@@ -372,12 +392,79 @@ async function onProcessQueue() {
 }
 
 async function onCancel() {
+  uiLog.warn('process.cancelClicked');
+  // Show a "Cancelling..." state immediately so the user knows the click was
+  // received. The button stays visible but disabled until the SW broadcasts
+  // status: 'cancelled'/'done'.
+  els.btnCancel.disabled = true;
+  els.btnCancel.textContent = 'Cancelling...';
   await sendMessage('cancelProcessing');
-  els.btnCancel.classList.add('hidden');
-  els.btnProcess.classList.remove('hidden');
-  els.btnProcess.disabled = false;
-  els.btnProcess.textContent = 'Process Selected Chats';
-  setStatus('Processing cancelled.', 'error');
+  setStatus('Cancelling — finishing current chat...', 'error');
+}
+
+function getLocalLogLines() {
+  return (typeof Logger !== 'undefined' && Logger.buffer) ? Logger.buffer.lines() : [];
+}
+
+async function onDownloadLog() {
+  uiLog.info('log.downloadClicked');
+  const result = await sendMessage('downloadLog', { uiLines: getLocalLogLines() });
+  if (!result || !result.text) {
+    setStatus('Log is empty.', 'error');
+    return;
+  }
+  try {
+    const blob = new Blob([result.text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    await chrome.downloads.download({ url, filename: result.filename, saveAs: true });
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setStatus(`Log saved (${result.text.split('\n').length} lines).`, 'success');
+  } catch (err) {
+    setStatus('Log download failed: ' + err.message, 'error');
+  }
+}
+
+async function onCopyLog() {
+  uiLog.info('log.copyClicked');
+  const result = await sendMessage('getLog', { uiLines: getLocalLogLines() });
+  if (!result || !result.text) {
+    setStatus('Log is empty.', 'error');
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(result.text);
+    setStatus(`Log copied to clipboard (${result.text.split('\n').length} lines).`, 'success');
+  } catch (err) {
+    // Fallback when clipboard API is blocked: use a hidden textarea + execCommand.
+    const ta = document.createElement('textarea');
+    ta.value = result.text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+      document.execCommand('copy');
+      setStatus('Log copied to clipboard.', 'success');
+    } catch (err2) {
+      setStatus('Could not copy: ' + err2.message, 'error');
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+}
+
+function setSettingsLocked(locked) {
+  // Lock controls that would corrupt an in-flight run if changed.
+  els.dateFrom.disabled = locked;
+  els.dateTo.disabled = locked;
+  els.btnScan.disabled = locked;
+  els.btnSaveSettings.disabled = locked;
+  els.btnClearData.disabled = locked;
+  els.senderName.disabled = locked;
+  els.rowMode.disabled = locked;
+  els.redactPII.disabled = locked;
+  document.querySelectorAll('input[name="extractMode"]').forEach(r => { r.disabled = locked; });
+  document.querySelectorAll('input[name="mode"]').forEach(r => { r.disabled = locked; });
 }
 
 async function onDownload() {
@@ -387,14 +474,34 @@ async function onDownload() {
   setStatus('Preparing export...');
   els.btnDownload.disabled = true;
 
-  const result = await sendMessage(action);
+  try {
+    const result = await sendMessage(action);
 
-  els.btnDownload.disabled = false;
+    if (result.error) {
+      setStatus(result.error, 'error');
+      return;
+    }
 
-  if (result.error) {
-    setStatus(result.error, 'error');
-  } else {
-    setStatus(`Exported ${result.count} rows. Done!`, 'success');
+    if (!result.csv) {
+      setStatus('Export returned no data.', 'error');
+      return;
+    }
+
+    // Build the blob URL here in the side panel — DOM is available, unlike
+    // in the MV3 service worker where URL.createObjectURL is not supported.
+    const blob = new Blob([result.csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    try {
+      await chrome.downloads.download({ url, filename: result.filename, saveAs: true });
+      setStatus(`Exported ${result.count} rows. Done!`, 'success');
+    } finally {
+      // Revoke after a short delay so chrome.downloads has time to read it.
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+  } catch (err) {
+    setStatus('Download failed: ' + err.message, 'error');
+  } finally {
+    els.btnDownload.disabled = false;
   }
 }
 
@@ -422,9 +529,11 @@ async function onClearData() {
 // ── Settings ──
 
 function gatherSettings() {
+  const modeRadio = document.querySelector('input[name="extractMode"]:checked');
+  const extractMode = (modeRadio && modeRadio.value === 'full') ? 'full' : 'test';
   return {
     senderName: els.senderName.value.trim() || 'Kate Kondrateva',
-    messagesPerChat: parseInt(els.messagesPerChat.value, 10) || 8,
+    extractMode,
     rowMode: els.rowMode.value,
     redactPII: els.redactPII.checked,
     dateFrom: els.dateFrom.value || '',
@@ -449,10 +558,7 @@ function updateProgress(data) {
   } else if (data.status === 'done') {
     els.progressFill.style.width = '100%';
     els.progressText.textContent = `Done! Chats: ${data.processed}/${data.total} | Messages: ${msgCount} | Failed: ${data.failures}`;
-    els.btnCancel.classList.add('hidden');
-    els.btnProcess.classList.remove('hidden');
-    els.btnProcess.disabled = false;
-    els.btnProcess.textContent = 'Process Selected Chats';
+    finishRunUI();
     hasProcessedData = msgCount > 0;
     els.btnDownload.disabled = !hasProcessedData;
     updateStepHighlight();
@@ -464,11 +570,21 @@ function updateProgress(data) {
     }
   } else if (data.status === 'cancelled') {
     els.progressText.textContent = 'Cancelled';
-    els.btnCancel.classList.add('hidden');
-    els.btnProcess.classList.remove('hidden');
-    els.btnProcess.disabled = false;
-    els.btnProcess.textContent = 'Process Selected Chats';
+    finishRunUI();
+    setStatus('Processing cancelled. Log available for download.', 'error');
   }
+}
+
+function finishRunUI() {
+  els.btnCancel.classList.add('hidden');
+  els.btnCancel.disabled = false;
+  els.btnCancel.textContent = 'Cancel';
+  els.btnProcess.classList.remove('hidden');
+  els.btnProcess.disabled = false;
+  els.btnProcess.textContent = 'Process Selected Chats';
+  els.logActions.classList.remove('hidden');
+  setSettingsLocked(false);
+  isProcessingLocal = false;
 }
 
 function findChatName(chatKey) {

@@ -7,19 +7,25 @@
  * Platform-agnostic: uses selectors.js to adapt to LinkedIn, Instagram, etc.
  */
 
-/* global PLATFORMS, detectPlatform, getSelectors, queryWithFallback, queryAllWithFallback */
+/* global PLATFORMS, detectPlatform, getSelectors, queryWithFallback, queryAllWithFallback, Logger, Extractor */
 
 (() => {
   'use strict';
 
   // ── Platform Detection ──
   const platformId = detectPlatform();
-  console.log('[ChatExport] Platform detected:', platformId, '| URL:', location.href);
+  const log = (typeof Logger !== 'undefined' ? Logger.logFor('cs') : { info: console.log, warn: console.warn, error: console.error });
+  log.info('platform.detect', { platform: platformId, url: location.href });
   if (!platformId) return; // Not on a supported platform
 
   const platform = PLATFORMS[platformId];
   const SEL = getSelectors(platformId);
-  console.log('[ChatExport] Content script loaded for', platform.label);
+  log.info('content.loaded', { platform: platform.label });
+
+  // ── Abort flag (set by service worker on cancel) ──
+  // Checked inside long-running scroll/wait loops so Cancel returns control
+  // within ~one scroll-pause instead of up to maxTimePerChat (20 s).
+  let abortFlag = false;
 
   // ── Extraction States ──
   const State = {
@@ -33,23 +39,41 @@
   };
 
   // ── Limits ──
+  // Test mode (cold/dry run) uses tight timeouts so the user can answer
+  // "does this work at all?" in seconds. Full mode keeps the longer budgets
+  // since we actually want to scroll-load older history.
   const LIMITS = {
     maxScrollAttempts: 25,
-    maxTimePerChat: 20000,   // 20 seconds
-    scrollPause: 400,        // ms between scroll attempts
-    renderTimeout: 5000,     // wait for messages to appear
-    openTimeout: 3000,       // wait for chat to open
+    maxTimePerChat: 20000,   // full mode: 20 s
+    scrollPause: 400,
+    renderTimeout: 5000,     // full mode: 5 s for messages to appear
+    renderTimeoutTest: 1500, // test mode: 1.5 s — typical render is <500 ms
+    openTimeout: 3000,
   };
 
   // ── Message Listener ──
+  // Logger has a per-context buffer. We mark already-shipped lines so each
+  // response only carries the new lines emitted during that handler.
+  let lastShippedLogIndex = 0;
+
+  function pendingLogLines() {
+    const all = (typeof Logger !== 'undefined' && Logger.buffer) ? Logger.buffer.lines() : [];
+    const next = all.slice(lastShippedLogIndex);
+    lastShippedLogIndex = all.length;
+    return next;
+  }
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    console.log('[ChatExport] Received message:', message.action);
+    log.info('msg.received', { action: message.action });
     handleMessage(message).then(result => {
-      console.log('[ChatExport] Response for', message.action, ':', result.error || `OK (${result.chats?.length || result.messages?.length || 0} items)`);
+      const itemCount = (result.chats && result.chats.length) || (result.messages && result.messages.length) || 0;
+      log.info('msg.response', { action: message.action, ok: !result.error, items: itemCount, error: result.error });
+      // Attach new log lines so the SW can merge them into its master buffer.
+      result._cs_logs = pendingLogLines();
       sendResponse(result);
     }).catch(err => {
-      console.error('[ChatExport] Error in', message.action, ':', err);
-      sendResponse({ error: err.message });
+      log.error('msg.error', { action: message.action, reason: err.message });
+      sendResponse({ error: err.message, _cs_logs: pendingLogLines() });
     });
     return true;
   });
@@ -59,9 +83,15 @@
 
     switch (action) {
       case 'scanInbox':
+        abortFlag = false;
         return scanInbox();
       case 'extractChat':
-        return extractChat(payload.chatKey, payload.settings);
+        abortFlag = false;
+        return extractChat(payload.chatKey, payload.settings, payload.displayName);
+      case 'abortExtraction':
+        abortFlag = true;
+        log.warn('abort.signaled', { reason: 'user-cancel' });
+        return { ok: true };
       case 'diagnose':
         return runDiagnostics();
       default:
@@ -73,55 +103,99 @@
   // Reads the visible conversation list from the sidebar
 
   async function scanInbox() {
+    log.info('scanInbox.start', { platform: platformId });
+
     const listContainer = queryWithFallback(document, SEL.conversationList);
     if (!listContainer) {
-      return { error: 'Cannot find conversation list. Make sure you are on the messaging page.' };
+      log.error('scanInbox.noList', { primary: SEL.conversationList?.primary, fallback: SEL.conversationList?.fallback });
+      return { error: 'Cannot find conversation list. Make sure you are on the messaging page.', selectorBroken: true };
     }
 
-    // Auto-scroll the conversation list to load more chats (LinkedIn lazy-loads ~20 at a time)
+    // Auto-scroll the conversation list to load more chats.
     const scrollTarget = listContainer.closest('[style*="overflow"]')
       || listContainer.parentElement
       || listContainer;
 
+    // Reset to top first so re-running Scan after a partial scroll is deterministic.
+    scrollTarget.scrollTop = 0;
+    await sleep(500);
+    if (abortFlag) return { error: 'Scan aborted', chats: [] };
+
     let prevCount = 0;
     let stableRounds = 0;
-    const maxScrollAttempts = 30;
+    const maxScrollAttempts = 50;
+    const stableThreshold = 5;
 
     for (let i = 0; i < maxScrollAttempts; i++) {
+      if (abortFlag) {
+        log.warn('scanInbox.aborted', { round: i });
+        break;
+      }
+
       const currentItems = queryAllWithFallback(listContainer, SEL.conversationItem);
       const currentCount = currentItems.length;
-      console.log(`[ChatExport] Scan scroll #${i}: ${currentCount} conversations loaded`);
+      log.info('scanInbox.scroll', { round: i, count: currentCount });
 
       if (currentCount === prevCount) {
         stableRounds++;
-        if (stableRounds >= 3) break; // No new items after 3 scroll attempts
+        if (stableRounds >= stableThreshold) break;
       } else {
         stableRounds = 0;
       }
       prevCount = currentCount;
 
-      // Scroll the conversation list down
       scrollTarget.scrollTop = scrollTarget.scrollHeight;
-      // Also try scrolling the last item into view
       if (currentItems.length > 0) {
         currentItems[currentItems.length - 1].scrollIntoView({ block: 'end' });
       }
       await sleep(800);
     }
 
-    const items = queryAllWithFallback(listContainer, SEL.conversationItem);
+    let items = queryAllWithFallback(listContainer, SEL.conversationItem);
+    let usedBroadFallback = false;
     if (items.length === 0) {
-      // Try broader search on entire document
-      const broadItems = queryAllWithFallback(document, SEL.conversationItem);
-      if (broadItems.length === 0) {
-        return { error: 'No conversations found in the list. Scroll to load some conversations first.' };
-      }
-      return { chats: broadItems.map(parseChatItem).filter(Boolean), platform: platformId };
+      // Broader fallback in case the scoped container missed.
+      items = queryAllWithFallback(document, SEL.conversationItem);
+      usedBroadFallback = true;
+    }
+    if (items.length === 0) {
+      log.error('scanInbox.empty', {
+        primary: SEL.conversationItem?.primary,
+        fallback: SEL.conversationItem?.fallback,
+      });
+      return {
+        error: 'No conversations found. Selector may need updating.',
+        selectorBroken: true,
+        chats: [],
+      };
     }
 
-    const chats = items.map(parseChatItem).filter(Boolean);
-    console.log(`[ChatExport] Scan complete: ${chats.length} chats found`);
-    return { chats, platform: platformId };
+    const parsed = items.map(parseChatItem).filter(Boolean);
+    const beforeDedup = parsed.length;
+    let dedupResult;
+    if (typeof Extractor !== 'undefined' && Extractor.dedupeChats) {
+      dedupResult = Extractor.dedupeChats(parsed);
+    } else {
+      // Inline fallback if utility script didn't load.
+      const seen = new Set();
+      const out = [];
+      let dropped = 0;
+      for (const c of parsed) {
+        if (seen.has(c.chatKey)) { dropped++; continue; }
+        seen.add(c.chatKey);
+        out.push(c);
+      }
+      dedupResult = { chats: out, droppedDuplicates: dropped };
+    }
+
+    log.info('scanInbox.done', {
+      count: dedupResult.chats.length,
+      dedupedFrom: beforeDedup,
+      dropped: dedupResult.droppedDuplicates,
+      broadFallback: usedBroadFallback,
+    });
+
+    return { chats: dedupResult.chats, platform: platformId };
   }
 
   function parseChatItem(itemEl) {
@@ -170,20 +244,29 @@
     return els[0].textContent.slice(0, 80);
   }
 
-  async function extractChat(chatKey, settings) {
-    const n = settings?.messagesPerChat || 8;
+  async function extractChat(chatKey, settings, displayName) {
+    const mode = settings?.extractMode === 'full' ? 'full' : 'test';
     const senderName = settings?.senderName || 'Kate Kondrateva';
+    // Test mode is meant for "does this work at all?" — 3 messages is enough
+    // to verify the format. Full mode is unbounded.
+    const testLimit = 3;
     let state = State.OPEN_CHAT;
     const startTime = Date.now();
     const debug = [];
 
+    log.info('extractChat.start', { chatKey, mode, hasDisplayName: !!displayName });
+
     try {
       // ── OPEN_CHAT ──
       if (state === State.OPEN_CHAT) {
-        // Record current message fingerprint BEFORE clicking new chat
         _prevMessageFingerprint = getMessageFingerprint();
-        const opened = await openChat(chatKey);
+        const opened = await openChat(chatKey, displayName);
+        if (abortFlag) {
+          log.warn('extractChat.aborted', { chatKey, stage: 'open' });
+          return { error: 'Aborted', chatKey, aborted: true };
+        }
         if (!opened) {
+          log.warn('extractChat.openFail', { chatKey });
           return { error: 'Could not open chat', chatKey };
         }
         state = State.WAIT_RENDER;
@@ -191,17 +274,28 @@
 
       // ── WAIT_RENDER ──
       if (state === State.WAIT_RENDER) {
-        const rendered = await waitForMessages();
+        const rendered = await waitForMessages(mode === 'test' ? LIMITS.renderTimeoutTest : LIMITS.renderTimeout);
+        if (abortFlag) {
+          log.warn('extractChat.aborted', { chatKey, stage: 'render' });
+          return { error: 'Aborted', chatKey, aborted: true };
+        }
         if (!rendered) {
           debug.push('waitForMessages timed out');
+          log.warn('extractChat.renderTimeout', { chatKey });
           return { error: 'Messages did not render in time', chatKey, debug };
         }
         state = State.SCROLL_TOP;
       }
 
-      // ── SCROLL_TOP (optional — try to load older messages) ──
+      // ── SCROLL_TOP (only in full mode — test mode skips to keep things fast) ──
       if (state === State.SCROLL_TOP) {
-        await scrollToLoadMore(startTime);
+        if (mode === 'full') {
+          await scrollToLoadMore(startTime);
+          if (abortFlag) {
+            log.warn('extractChat.aborted', { chatKey, stage: 'scroll' });
+            return { error: 'Aborted', chatKey, aborted: true };
+          }
+        }
         state = State.COLLECT;
       }
 
@@ -211,22 +305,35 @@
         const allMessages = collectMessages(senderName, contactName, chatKey);
         debug.push(`all=${allMessages.length}`);
 
-        // Filter to first N messages authored by the user
-        const myMessages = allMessages.filter(m => m.sender === senderName);
-        debug.push(`mine=${myMessages.length}`);
-        const firstN = myMessages.slice(0, n);
+        // Mode-based selection — no senderName filter (the previous behaviour
+        // was the source of "0 messages" when senderName didn't match).
+        let selected;
+        if (typeof Extractor !== 'undefined' && Extractor.selectMessagesForMode) {
+          selected = Extractor.selectMessagesForMode(allMessages, mode, { testLimit });
+        } else {
+          selected = mode === 'full' ? allMessages.slice() : allMessages.slice(-testLimit);
+        }
+
+        log.info('extractChat.collected', {
+          chatKey,
+          mode,
+          total: allMessages.length,
+          returned: selected.length,
+        });
 
         return {
-          messages: firstN,
-          allMessages: allMessages.slice(0, n * 3),
+          messages: selected,
+          allMessages: allMessages.slice(0, Math.max(60, testLimit * 3)),
           chatKey,
           total: allMessages.length,
-          collected: firstN.length,
-          partial: firstN.length < n,
+          collected: selected.length,
+          partial: false,
+          mode,
           debug,
         };
       }
     } catch (err) {
+      log.error('extractChat.error', { chatKey, reason: err.message });
       return { error: err.message, chatKey, debug };
     }
 
@@ -235,58 +342,163 @@
 
   // ── State Machine Helpers ──
 
-  async function openChat(chatKey) {
-    // Find the conversation item and click it
-    const items = queryAllWithFallback(document, SEL.conversationItem);
-
-    for (const item of items) {
-      const link = queryWithFallback(item, SEL.conversationItemLink);
-      if (link?.href?.includes(chatKey)) {
-        link.click();
-        await sleep(1500);
-        return true;
-      }
-
-      // Fallback: match by name
-      const nameEl = queryWithFallback(item, SEL.conversationItemName);
-      const name = cleanText(nameEl?.textContent);
-      const expectedName = chatKeyToName(chatKey);
-      if (name && expectedName && name.toLowerCase() === expectedName.toLowerCase()) {
-        const clickTarget = link || item;
-        clickTarget.click();
-        await sleep(1500);
-        return true;
+  /**
+   * Find and click a chat item in the conversation list.
+   *
+   * Three strategies, in priority order:
+   *   1. href match — for LinkedIn / Sales Navigator where each item is an
+   *      <a href="/messaging/thread/...">.
+   *   2. name match in currently rendered items — fast path.
+   *   3. scroll-to-find — for WhatsApp / Telegram which virtualise the list:
+   *      items off-screen are removed from the DOM, so we have to scroll the
+   *      list incrementally and re-check after each scroll.
+   *
+   * The previous implementation only did (1) and a strict equality (2), which
+   * is why WhatsApp produced "Could not find chat ... Skipping." for almost
+   * every chat after the first — by the time the loop reached chat #2, the
+   * list had scrolled and chat #2's <li> had been recycled.
+   */
+  async function openChat(chatKey, providedDisplayName) {
+    // Strategy 1 — href-based (LinkedIn / Sales Navigator)
+    {
+      const items = queryAllWithFallback(document, SEL.conversationItem);
+      for (const item of items) {
+        if (abortFlag) return false;
+        const link = queryWithFallback(item, SEL.conversationItemLink);
+        if (link && link.href && link.href.includes(chatKey)) {
+          link.click();
+          await waitForChatSwitch(800);
+          return true;
+        }
       }
     }
 
-    // Do NOT use location.href navigation — it destroys the content script
-    // and breaks all subsequent chat processing. Just skip this chat.
-    console.warn(`[ChatExport] Could not find chat ${chatKey} in conversation list. Skipping.`);
+    // Strategy 2/3 use a fuzzy name match. Source of truth for the target
+    // name is the displayName captured at scan time (passed through from SW).
+    // Falls back to chatKeyToName(slug) if not available.
+    const targetName = cleanText(providedDisplayName) || chatKeyToName(chatKey);
+
+    const matcher = (typeof Extractor !== 'undefined' && Extractor.matchesChatName)
+      ? Extractor.matchesChatName
+      : function (cands, t) {
+          const tl = String(t).toLowerCase();
+          for (const c of cands) {
+            if (!c) continue;
+            const cl = String(c).toLowerCase();
+            if (cl === tl || cl.includes(tl) || tl.includes(cl)) return true;
+          }
+          return false;
+        };
+
+    const tryFindAndClick = () => {
+      const items = queryAllWithFallback(document, SEL.conversationItem);
+      for (const item of items) {
+        const candidates = [];
+        const titleEls = item.querySelectorAll('span[title]');
+        titleEls.forEach((el) => {
+          candidates.push(el.getAttribute('title'));
+          candidates.push(el.textContent);
+        });
+        item.querySelectorAll('span[dir="auto"]').forEach((el) => candidates.push(el.textContent));
+        const nameEl = queryWithFallback(item, SEL.conversationItemName);
+        if (nameEl) {
+          candidates.push(nameEl.textContent);
+          if (nameEl.getAttribute) candidates.push(nameEl.getAttribute('title'));
+        }
+
+        if (matcher(candidates, targetName)) {
+          const clickTarget = item.querySelector('div[role="button"]')
+            || item.querySelector('a')
+            || item;
+          clickTarget.click();
+          return true;
+        }
+      }
+      return false;
+    };
+
+    // Strategy 2 — try without scrolling.
+    if (tryFindAndClick()) {
+      await waitForChatSwitch(800);
+      return true;
+    }
+
+    // Strategy 3 — scroll the conversation list looking for the chat.
+    const listContainer = queryWithFallback(document, SEL.conversationList);
+    if (listContainer) {
+      const scrollTarget = listContainer.closest('[style*="overflow"]')
+        || listContainer.parentElement
+        || listContainer;
+
+      // Reset to top so search is deterministic.
+      scrollTarget.scrollTop = 0;
+      await sleep(300);
+
+      const maxScrolls = 40;
+      for (let i = 0; i < maxScrolls; i++) {
+        if (abortFlag) return false;
+        if (tryFindAndClick()) {
+          await waitForChatSwitch(800);
+          log.info('openChat.foundAfterScroll', { chatKey, scrolls: i });
+          return true;
+        }
+        const before = scrollTarget.scrollTop;
+        scrollTarget.scrollBy(0, scrollTarget.clientHeight || 400);
+        await sleep(300);
+        // If the scroll position didn't change, we're at the bottom.
+        if (scrollTarget.scrollTop === before) break;
+      }
+    }
+
+    log.warn('openChat.notFound', { chatKey, target: targetName });
     return false;
   }
 
-  async function waitForMessages() {
-    const deadline = Date.now() + LIMITS.renderTimeout;
+  /**
+   * Wait for the chat-area DOM to swap after a chat-list click. Returns as
+   * soon as the message fingerprint changes from the previous chat OR after
+   * `maxMs` elapses. Replaces the unconditional sleep(1500) — which dominated
+   * total runtime — with an adaptive wait that's typically 100-300 ms.
+   */
+  async function waitForChatSwitch(maxMs) {
+    const before = _prevMessageFingerprint;
+    const deadline = Date.now() + (maxMs || 800);
+    while (Date.now() < deadline) {
+      if (abortFlag) return;
+      const now = getMessageFingerprint();
+      if (now && now !== before) return;
+      // Some platforms render the new chat header before its messages.
+      // Detect by header text change as a fallback signal.
+      const header = getContactNameFromHeader() || document.querySelector('#main header')?.textContent;
+      if (header) {
+        // Header present: 100 ms grace then return.
+        await sleep(100);
+        return;
+      }
+      await sleep(50);
+    }
+  }
+
+  async function waitForMessages(timeoutMs) {
+    const deadline = Date.now() + (timeoutMs || LIMITS.renderTimeout);
 
     // For Sales Navigator: wait for the message content to CHANGE from
     // the previous chat (prevents reading stale DOM from the prior chat)
     if (platformId === 'sales_navigator') {
       while (Date.now() < deadline) {
+        if (abortFlag) return false;
         const currentFp = getMessageFingerprint();
         const dataXEls = document.querySelectorAll('[data-x-message-content]');
 
-        // Messages present AND different from previous chat
         if (dataXEls.length > 0 && currentFp !== _prevMessageFingerprint) {
           return true;
         }
-        // If no previous fingerprint (first chat), just check presence
         if (!_prevMessageFingerprint && dataXEls.length > 0) {
           return true;
         }
 
         await sleep(300);
       }
-      // Last resort: accept whatever is there (might be same chat reopened)
       const dataXEls = document.querySelectorAll('[data-x-message-content]');
       if (dataXEls.length > 0) return true;
       return false;
@@ -294,6 +506,7 @@
 
     // Standard LinkedIn / other platforms
     while (Date.now() < deadline) {
+      if (abortFlag) return false;
       const messageList = queryWithFallback(document, SEL.messageList);
       if (messageList) {
         const items = queryAllWithFallback(messageList, SEL.messageItem);
@@ -347,6 +560,7 @@
     let lastHeight = scrollContainer.scrollHeight;
 
     while (attempts < LIMITS.maxScrollAttempts) {
+      if (abortFlag) break;
       if (Date.now() - startTime > LIMITS.maxTimePerChat) break;
 
       scrollContainer.scrollTop = 0; // Scroll to top
@@ -381,7 +595,58 @@
     return cleanText(headerName?.textContent);
   }
 
+  /**
+   * WhatsApp Web — parse data-pre-plain-text for timestamp + sender.
+   * Format: "[12:34, 5/4/2024] Sender Name: " (or "You: " for own messages).
+   * The actual message body is inside `span.copyable-text`.
+   */
+  function collectMessagesWhatsapp(senderName, contactName, chatKey) {
+    const messages = [];
+    const messageEls = document.querySelectorAll('#main div.message-in, #main div.message-out');
+    log.info('whatsapp.extract', { count: messageEls.length });
+
+    for (const el of messageEls) {
+      const isMine = el.classList.contains('message-out');
+
+      const meta = el.querySelector('[data-pre-plain-text]');
+      const preText = meta ? meta.getAttribute('data-pre-plain-text') || '' : '';
+
+      let timestamp = '';
+      let parsedSender = '';
+      const m = preText.match(/^\[([^\]]+)\]\s*([^:]*):\s*$/);
+      if (m) {
+        timestamp = m[1].trim();
+        parsedSender = cleanText(m[2]);
+      }
+
+      // Body: prefer span.copyable-text inside the bubble; fall back to the
+      // wrapper's text minus the meta string (handles non-text attachments).
+      let bodyEl = el.querySelector('span.copyable-text');
+      if (!bodyEl) bodyEl = meta;
+      const text = cleanText(bodyEl?.textContent);
+      if (!text) continue;
+
+      const finalSender = isMine
+        ? senderName
+        : (parsedSender && parsedSender.toLowerCase() !== 'you' ? parsedSender : contactName);
+
+      messages.push({
+        platform: platform.csvPlatformName,
+        messageDateRaw: timestamp,
+        sender: finalSender,
+        receiver: isMine ? contactName : senderName,
+        text,
+        chatKey,
+      });
+    }
+    return messages;
+  }
+
   function collectMessages(senderName, contactName, chatKey) {
+    if (platformId === 'whatsapp') {
+      return collectMessagesWhatsapp(senderName, contactName, chatKey);
+    }
+
     const messages = [];
 
     // ── Sales Navigator: Direct extraction using [data-x-message-content] ──

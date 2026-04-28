@@ -1,0 +1,62 @@
+<!--
+  WhatsApp Web fixture (captured 2026-04-28 from a live diagnose run).
+  WhatsApp uses [role="row"] for chat-list items, not "listitem". Each
+  message bubble in the open chat exposes [data-pre-plain-text] which we
+  parse for sender + timestamp.
+
+  When WhatsApp ships a DOM change that breaks our selectors, this fixture
+  must be re-captured alongside selectors.js.
+-->
+<html><body>
+<div id="app">
+  <div id="pane-side">
+    <div role="grid" aria-label="Chat list">
+      <div role="row" tabindex="-1">
+        <div>
+          <span title="Effie Guo" dir="auto"><span dir="auto">Effie Guo</span></span>
+          <div class="_ak8i"><span aria-hidden="true">12:34</span></div>
+        </div>
+        <div>
+          <span dir="ltr">Yes, see you then</span>
+        </div>
+      </div>
+      <div role="row" tabindex="-1">
+        <div>
+          <span title="+971 56 617 8030" dir="auto"><span dir="auto">+971 56 617 8030</span></span>
+          <div class="_ak8i"><span aria-hidden="true">Yesterday</span></div>
+        </div>
+        <div>
+          <span dir="ltr">Photo</span>
+        </div>
+      </div>
+      <div role="row" tabindex="-1">
+        <div>
+          <span title="Atelic - AMR Review" dir="auto"><span dir="auto">Atelic - AMR Review</span></span>
+          <div class="_ak8i"><span aria-hidden="true">Mon</span></div>
+        </div>
+        <div>
+          <span dir="ltr">Sounds good</span>
+        </div>
+      </div>
+    </div>
+  </div>
+  <!-- This [role="row"] OUTSIDE #pane-side must NOT be picked up by the
+       conversationItem selector — the historical 68-vs-69 fluctuation came
+       from over-broad selectors leaking chat-area rows into the count. -->
+  <div id="main">
+    <div class="copyable-area">
+      <div role="row">A message bubble in the open chat — must not count as a chat.</div>
+      <div class="message-in">
+        <div data-pre-plain-text="[12:34, 5/4/2024] Effie Guo: ">
+          <span class="copyable-text">Hi! Are we still on for tomorrow?</span>
+        </div>
+      </div>
+      <div class="message-out">
+        <div data-pre-plain-text="[12:35, 5/4/2024] You: ">
+          <span class="copyable-text">Yes, see you then</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+</body></html>

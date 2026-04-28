@@ -3,38 +3,38 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>LinkedIn Chat Export</title>
+  <title>Chat Export</title>
   <link rel="stylesheet" href="sidepanel.css">
 </head>
 <body>
   <div id="app">
-    <!-- Header -->
+    <!-- Header (single-flow, no tabs — settings live in collapsible at the bottom) -->
     <header class="header">
-      <div class="tabs">
-        <button class="tab active" data-tab="chats">Chats</button>
-        <button class="tab" data-tab="settings">Settings</button>
+      <div class="title-bar">
+        <strong>Chat Export</strong>
+        <span class="title-hint">Local CSV export — no data leaves your browser</span>
       </div>
     </header>
 
-    <!-- Chats Tab -->
     <section id="tab-chats" class="tab-content active">
 
       <!-- Step 1: Scan -->
       <div class="section step-section">
         <div class="step-header">
           <span class="step-num" id="stepNum1">1</span>
-          <label class="label step-label">Open messaging page & scan</label>
+          <label class="label step-label">Scan inbox</label>
         </div>
+        <div id="scanHint" class="hint">Open your messaging tab (LinkedIn, Sales Navigator, WhatsApp Web, etc.), then click Scan.</div>
         <button id="btnScan" class="btn btn-primary full-width">Scan Inbox</button>
-        <div id="scanHint" class="hint">Open LinkedIn Messaging or Sales Navigator Inbox, then click Scan.</div>
       </div>
 
-      <!-- Step 2: Select Chats -->
+      <!-- Step 2: Pick chats -->
       <div class="section step-section" id="step2Section">
         <div class="step-header">
           <span class="step-num" id="stepNum2">2</span>
-          <label class="label step-label">Select chats</label>
+          <label class="label step-label">Pick chats</label>
         </div>
+        <div class="hint">Type a name, click to add. Use mode toggle to flip the meaning.</div>
         <div class="chat-selector">
           <input
             type="text"
@@ -47,29 +47,40 @@
         </div>
         <div id="selectedChats" class="chip-list"></div>
 
-        <!-- Mode Toggle -->
         <div class="row mode-row">
-          <label class="label small">Mode:</label>
           <label class="radio-label">
-            <input type="radio" name="mode" value="selected" checked /> Selected only
+            <input type="radio" name="mode" value="selected" checked /> Only the chats above
           </label>
           <label class="radio-label">
             <input type="radio" name="mode" value="exclude" /> All except excluded
           </label>
         </div>
 
-        <!-- Excluded (shown only in exclude mode) -->
         <div id="excludeSection" class="hidden">
           <label class="label">Excluded:</label>
           <div id="excludedChats" class="chip-list"></div>
         </div>
       </div>
 
-      <!-- Step 3: Configure & Process -->
+      <!-- Step 3: Run -->
       <div class="section step-section">
         <div class="step-header">
           <span class="step-num" id="stepNum3">3</span>
-          <label class="label step-label">Configure & process</label>
+          <label class="label step-label">Run extraction</label>
+        </div>
+        <div class="hint">
+          <strong>Test run</strong> grabs ~3 most recent messages per chat — fast sanity check.
+          <strong>Full</strong> walks the whole conversation in the date range — slower.
+        </div>
+        <div class="mode-row">
+          <label class="radio-label">
+            <input type="radio" name="extractMode" value="test" checked />
+            Test run (3 messages per chat)
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="extractMode" value="full" />
+            Full conversation
+          </label>
         </div>
         <div class="date-row">
           <div class="date-field">
@@ -92,13 +103,17 @@
         </div>
         <div id="progressText" class="progress-text"></div>
         <div id="progressDetails" class="progress-details"></div>
+        <div class="log-actions hidden" id="logActions">
+          <button id="btnCopyLog" class="btn btn-secondary half-width">Copy log</button>
+          <button id="btnDownloadLog" class="btn btn-secondary half-width">Download .txt</button>
+        </div>
       </div>
 
-      <!-- Step 4: Download -->
+      <!-- Step 4: Download CSV -->
       <div class="section step-section">
         <div class="step-header">
           <span class="step-num" id="stepNum4">4</span>
-          <label class="label step-label">Download</label>
+          <label class="label step-label">Download CSV</label>
         </div>
         <select id="exportFormat">
           <option value="csv">Chats in CSV</option>
@@ -108,43 +123,42 @@
         <button id="btnDownload" class="btn btn-primary full-width" disabled>Download</button>
       </div>
 
+      <!-- Advanced settings — collapsed by default -->
+      <details class="advanced">
+        <summary>Advanced settings</summary>
+        <div class="section">
+          <label class="label">Your name (used to label sent vs. received messages)</label>
+          <input type="text" id="senderName" value="Kate Kondrateva" />
+        </div>
+        <div class="section">
+          <label class="label">CSV layout</label>
+          <select id="rowMode">
+            <option value="message">One row per message</option>
+            <option value="conversation">One row per conversation</option>
+          </select>
+        </div>
+        <div class="section">
+          <label class="label">
+            <input type="checkbox" id="redactPII" checked />
+            Redact PII (emails, phones, URLs) in anonymized export
+          </label>
+        </div>
+        <div class="section">
+          <button id="btnSaveSettings" class="btn btn-secondary full-width">Save Settings</button>
+        </div>
+        <div class="section">
+          <button id="btnClearData" class="btn btn-danger full-width">Clear All Data</button>
+        </div>
+      </details>
+
       <!-- Status -->
       <div id="statusBar" class="status-bar">Ready. Start by scanning your inbox.</div>
 
     </section>
-
-    <!-- Settings Tab -->
-    <section id="tab-settings" class="tab-content">
-      <div class="section">
-        <label class="label">Sender Name</label>
-        <input type="text" id="senderName" value="Kate Kondrateva" />
-      </div>
-      <div class="section">
-        <label class="label">Messages per chat (N)</label>
-        <input type="number" id="messagesPerChat" value="8" min="1" max="100" />
-      </div>
-      <div class="section">
-        <label class="label">Row mode</label>
-        <select id="rowMode">
-          <option value="message">One row per message</option>
-          <option value="conversation">One row per conversation</option>
-        </select>
-      </div>
-      <div class="section">
-        <label class="label">
-          <input type="checkbox" id="redactPII" checked />
-          Redact PII in anonymized export (emails, phones, URLs)
-        </label>
-      </div>
-      <div class="section">
-        <button id="btnSaveSettings" class="btn btn-secondary full-width">Save Settings</button>
-      </div>
-      <div class="section">
-        <button id="btnClearData" class="btn btn-danger full-width">Clear All Data</button>
-      </div>
-    </section>
   </div>
 
+  <script src="utils/logger.js"></script>
+  <script src="utils/extractor.js"></script>
   <script src="utils/anonymize.js"></script>
   <script src="utils/csv.js"></script>
   <script src="utils/redact.js"></script>
