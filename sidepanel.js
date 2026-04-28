@@ -47,7 +47,19 @@ const els = {
   btnDownloadLog: $('#btnDownloadLog'),
   btnCopyLog: $('#btnCopyLog'),
   logActions: $('#logActions'),
+  detectBanner: $('#detectBanner'),
+  detectIcon: $('#detectIcon'),
+  detectMessage: $('#detectMessage'),
+  detectUrl: $('#detectUrl'),
+  btnInspect: $('#btnInspect'),
+  btnRefreshDetect: $('#btnRefreshDetect'),
+  inspectPanel: $('#inspectPanel'),
+  inspectOutput: $('#inspectOutput'),
+  btnCopyInspect: $('#btnCopyInspect'),
+  btnDownloadInspect: $('#btnDownloadInspect'),
 };
+
+let lastInspection = null; // { markdown, filename, sample }
 
 // Step sections (for highlighting)
 const stepSections = [
@@ -95,6 +107,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   bindEvents();
   updateStepHighlight();
+
+  // Detect what's in the active tab and refresh on tab/url change.
+  refreshDetectBanner();
+  if (chrome.tabs) {
+    if (chrome.tabs.onActivated) {
+      chrome.tabs.onActivated.addListener(() => refreshDetectBanner());
+    }
+    if (chrome.tabs.onUpdated) {
+      chrome.tabs.onUpdated.addListener((_id, info) => {
+        if (info.url || info.status === 'complete') refreshDetectBanner();
+      });
+    }
+  }
 });
 
 // ── Event Bindings ──
@@ -126,6 +151,10 @@ function bindEvents() {
   els.btnDownload.addEventListener('click', onDownload);
   els.btnDownloadLog.addEventListener('click', onDownloadLog);
   els.btnCopyLog.addEventListener('click', onCopyLog);
+  els.btnInspect.addEventListener('click', onInspectPage);
+  els.btnRefreshDetect.addEventListener('click', refreshDetectBanner);
+  els.btnCopyInspect.addEventListener('click', onCopyInspection);
+  els.btnDownloadInspect.addEventListener('click', onDownloadInspection);
 
   // Settings
   els.btnSaveSettings.addEventListener('click', onSaveSettings);
@@ -669,6 +698,92 @@ function sendMessage(action, payload) {
       }
     });
   });
+}
+
+// ── Active-tab detection + inspection ──
+
+async function refreshDetectBanner() {
+  setDetectBanner({ icon: '⏳', message: 'Checking active tab…', url: '', state: 'loading' });
+  const r = await sendMessage('inspectActiveTab');
+  if (!r || r.error) {
+    setDetectBanner({ icon: '❓', message: r?.error || 'Could not read active tab.', url: '', state: 'unsupported' });
+    return;
+  }
+  if (r.supported) {
+    setDetectBanner({
+      icon: '🟢',
+      message: `${r.platformLabel} detected — ready to scrape.`,
+      url: r.url || '',
+      state: 'supported',
+    });
+  } else {
+    setDetectBanner({
+      icon: '⚠️',
+      message: 'This page is not yet supported.',
+      url: r.url || '',
+      state: 'unsupported',
+    });
+  }
+}
+
+function setDetectBanner({ icon, message, url, state }) {
+  els.detectIcon.textContent = icon;
+  els.detectMessage.textContent = message;
+  els.detectUrl.textContent = url ? safeShortenUrl(url) : '';
+  els.detectBanner.classList.remove('detect-loading', 'detect-supported', 'detect-unsupported');
+  els.detectBanner.classList.add('detect-' + state);
+}
+
+function safeShortenUrl(u) {
+  try {
+    const x = new URL(u);
+    return x.hostname + x.pathname;
+  } catch {
+    return u;
+  }
+}
+
+async function onInspectPage() {
+  uiLog.info('inspect.clicked');
+  els.btnInspect.disabled = true;
+  els.btnInspect.textContent = 'Inspecting…';
+  try {
+    const r = await sendMessage('captureDomSample');
+    if (!r || r.error) {
+      setStatus(r?.error || 'Inspection failed.', 'error');
+      return;
+    }
+    lastInspection = r;
+    els.inspectOutput.value = r.markdown || '';
+    els.inspectPanel.classList.remove('hidden');
+    setStatus('DOM sample ready — copy or download below.', 'success');
+  } finally {
+    els.btnInspect.disabled = false;
+    els.btnInspect.textContent = 'Inspect this page';
+  }
+}
+
+async function onCopyInspection() {
+  if (!lastInspection?.markdown) return;
+  try {
+    await navigator.clipboard.writeText(lastInspection.markdown);
+    setStatus('DOM sample copied to clipboard.', 'success');
+  } catch (err) {
+    setStatus('Could not copy: ' + err.message, 'error');
+  }
+}
+
+async function onDownloadInspection() {
+  if (!lastInspection?.markdown) return;
+  try {
+    const blob = new Blob([lastInspection.markdown], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    await chrome.downloads.download({ url, filename: lastInspection.filename || 'dom-sample.md', saveAs: true });
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setStatus('DOM sample saved.', 'success');
+  } catch (err) {
+    setStatus('Download failed: ' + err.message, 'error');
+  }
 }
 
 // ── Sanitization ──

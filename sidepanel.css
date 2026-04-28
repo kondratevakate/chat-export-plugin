@@ -46,6 +46,66 @@ body {
   color: #888;
 }
 
+/* ── Active-tab detection banner ── */
+.detect-banner {
+  margin: 8px 12px 0;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid #e0e0e0;
+  background: #fafafa;
+  font-size: 12px;
+}
+
+.detect-banner.detect-supported {
+  background: #e8f5e9;
+  border-color: #2bb44e;
+}
+
+.detect-banner.detect-unsupported {
+  background: #fff4e5;
+  border-color: #f5a623;
+}
+
+.detect-banner.detect-loading {
+  background: #f0f0f0;
+  border-color: #d0d0d0;
+}
+
+.detect-text {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  color: #222;
+}
+
+.detect-url {
+  margin-top: 2px;
+  font-size: 11px;
+  color: #666;
+  word-break: break-all;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.detect-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+#inspectOutput {
+  width: 100%;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 11px;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #fafafa;
+  resize: vertical;
+}
+
 /* ── Advanced collapsible ── */
 details.advanced {
   margin-top: 16px;

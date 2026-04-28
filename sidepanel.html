@@ -18,6 +18,31 @@
 
     <section id="tab-chats" class="tab-content active">
 
+      <!-- Active-tab detection banner — shows what the plugin sees and whether
+           it can scrape this page. Always visible at the top of the flow. -->
+      <div id="detectBanner" class="detect-banner detect-loading">
+        <div class="detect-text">
+          <span id="detectIcon">⏳</span>
+          <span id="detectMessage">Checking active tab…</span>
+        </div>
+        <div class="detect-url" id="detectUrl"></div>
+        <div class="detect-actions">
+          <button id="btnInspect" class="btn btn-secondary half-width">Inspect this page</button>
+          <button id="btnRefreshDetect" class="btn btn-secondary half-width">Refresh</button>
+        </div>
+      </div>
+
+      <!-- Inspection result (DOM sample for new-platform contributors). -->
+      <div id="inspectPanel" class="section hidden">
+        <label class="label">DOM sample</label>
+        <div class="hint">Paste this into a GitHub issue / Claude prompt to add support for this site. No message text — only structural hints.</div>
+        <textarea id="inspectOutput" rows="10" readonly></textarea>
+        <div class="log-actions">
+          <button id="btnCopyInspect" class="btn btn-secondary half-width">Copy</button>
+          <button id="btnDownloadInspect" class="btn btn-secondary half-width">Download .md</button>
+        </div>
+      </div>
+
       <!-- Step 1: Scan -->
       <div class="section step-section">
         <div class="step-header">

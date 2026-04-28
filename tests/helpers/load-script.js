@@ -35,6 +35,10 @@ export function loadScriptCJS(relativePath) {
     globalThis: fakeGlobal,
     setTimeout,
     clearTimeout,
+    // selectors.js#detectPlatformFromUrl uses `new URL(...)`. In a fresh VM
+    // context, URL is not auto-available — pass Node's globals through.
+    URL,
+    URLSearchParams,
   };
   sandbox.exports = sandbox.module.exports;
   vm.createContext(sandbox);

@@ -257,8 +257,24 @@ const PLATFORM_SELECTORS = {
  * @returns {string|null} Platform id or null
  */
 function detectPlatform() {
-  const host = location.hostname;
-  const path = location.pathname;
+  return detectPlatformFromUrl(location.href);
+}
+
+/**
+ * Same as detectPlatform but takes a URL string — used by the service worker
+ * (which doesn't have `location`) to identify what's loaded in the active tab.
+ * @param {string} urlString
+ * @returns {string|null}
+ */
+function detectPlatformFromUrl(urlString) {
+  let host, path;
+  try {
+    const u = new URL(urlString);
+    host = u.hostname;
+    path = u.pathname;
+  } catch {
+    return null;
+  }
   for (const [id, platform] of Object.entries(PLATFORMS)) {
     for (const pattern of platform.hostPatterns) {
       const regex = new RegExp('^' + pattern.replace(/\*/g, '.*') + '$');
@@ -312,6 +328,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.PLATFORMS = PLATFORMS;
   globalThis.PLATFORM_SELECTORS = PLATFORM_SELECTORS;
   globalThis.detectPlatform = detectPlatform;
+  globalThis.detectPlatformFromUrl = detectPlatformFromUrl;
   globalThis.getSelectors = getSelectors;
   globalThis.queryWithFallback = queryWithFallback;
   globalThis.queryAllWithFallback = queryAllWithFallback;

@@ -37,17 +37,27 @@ describe('service_worker.js — no DOM-only APIs', () => {
   const source = readSW();
   const lines = source.split('\n');
 
+  // Lines inside a `runs-in-tab:start` ... `runs-in-tab:end` block are
+  // exempt — they define functions that get serialised by chrome.scripting
+  // and executed in the active tab's page context (where DOM exists).
+  const inTabRegion = new Array(lines.length).fill(false);
+  let depth = 0;
+  lines.forEach((line, i) => {
+    if (/runs-in-tab:start/.test(line)) depth++;
+    inTabRegion[i] = depth > 0;
+    if (/runs-in-tab:end/.test(line)) depth = Math.max(0, depth - 1);
+  });
+
   for (const rule of FORBIDDEN_IN_SW) {
     test(`disallowed: ${rule.pattern}`, () => {
       const offenders = [];
       lines.forEach((line, idx) => {
-        // Skip comment-only lines — they're allowed to mention the pattern,
-        // including in the cautionary note that documents the rule.
         const trimmed = line.trim();
         if (trimmed.startsWith('//') || trimmed.startsWith('*') || trimmed.startsWith('/*')) return;
+        if (inTabRegion[idx]) return;
         if (rule.pattern.test(line)) {
           if (rule.exempt && line.includes(rule.exempt)) return;
-          offenders.push({ line: idx + 1, text: line.trim() });
+          offenders.push({ line: idx + 1, text: trimmed });
         }
       });
       if (offenders.length) {

@@ -8,7 +8,8 @@
     "sidePanel",
     "storage",
     "downloads",
-    "scripting"
+    "scripting",
+    "tabs"
   ],
   "host_permissions": [
     "*://*.linkedin.com/*",

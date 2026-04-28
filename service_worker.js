@@ -94,6 +94,12 @@ async function handleMessage(message, sender) {
       await chrome.storage.local.remove(['extractedMessages', 'lastRunLog']);
       return { ok: true };
 
+    case 'inspectActiveTab':
+      return inspectActiveTab();
+
+    case 'captureDomSample':
+      return captureDomSample();
+
     case 'getLog':
       return { text: buildMergedLogText(payload?.uiLines) };
 
@@ -415,6 +421,234 @@ async function exportToFile(anonymize) {
 
 function dateStamp() {
   return new Date().toISOString().slice(0, 10).replace(/-/g, '');
+}
+
+// ── Active-tab inspection ──
+//
+// inspectActiveTab tells the side panel what's loaded in front of the user
+// and whether this plugin can scrape it. Lets us show "WhatsApp Web detected,
+// Scan will read your chat list" vs "Slack isn't supported yet — capture a
+// DOM sample to send to the developer".
+//
+// captureDomSample injects a self-contained probe into ANY active tab (uses
+// activeTab permission + chrome.scripting.executeScript on user gesture) and
+// returns a structured summary suitable for authoring new selectors.
+
+async function inspectActiveTab() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) return { error: 'No active tab.' };
+    const platformId = detectPlatformFromUrl(tab.url || '');
+    const platform = platformId ? PLATFORMS[platformId] : null;
+    return {
+      url: tab.url,
+      title: tab.title,
+      platformId,
+      platformLabel: platform ? platform.label : null,
+      supported: !!platformId,
+    };
+  } catch (err) {
+    return { error: 'inspectActiveTab failed: ' + err.message };
+  }
+}
+
+async function captureDomSample() {
+  try {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab) return { error: 'No active tab.' };
+    if (tab.url && /^(chrome|edge|brave|about|chrome-extension):/.test(tab.url)) {
+      return { error: 'Cannot inspect browser-internal pages.' };
+    }
+    const [{ result } = {}] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: domProbeFn,
+    });
+    if (!result) return { error: 'Probe returned no result.' };
+    log.info('inspect.captured', {
+      url: result.url,
+      roles: Object.keys(result.roles || {}).length,
+      clusters: result.clusters?.length || 0,
+    });
+    const markdown = buildInspectionMarkdown(result);
+    return {
+      ok: true,
+      sample: result,
+      markdown,
+      filename: `dom-sample_${slugifyHost(result.url)}_${dateStamp()}.md`,
+    };
+  } catch (err) {
+    return { error: 'Could not inspect page: ' + err.message };
+  }
+}
+
+function slugifyHost(url) {
+  try { return new URL(url).hostname.replace(/[^a-z0-9]/gi, '-'); }
+  catch { return 'page'; }
+}
+
+/**
+ * Self-contained DOM probe — runs in the active tab via chrome.scripting.
+ * MUST NOT close over outer scope (chrome.scripting serialises the function).
+ * Pure: no DOM mutation, no network, no PII in output (collects shapes,
+ * counts, and small structural HTML snippets — message text bodies are
+ * trimmed to length-only stats).
+ *
+ * runs-in-tab:start
+ * ↑ This marker tells tests/unit/mv3-guard.test.js that everything below
+ * runs in the page context (where DOM exists), not in the SW. DOM API
+ * usage between the start/end markers is intentional and not a bug.
+ */
+function domProbeFn() {
+  const out = {
+    url: location.href,
+    title: document.title || '',
+    timestamp: new Date().toISOString(),
+  };
+
+  // 1. Roles in use (excellent first signal — most modern apps use ARIA).
+  const roles = {};
+  document.querySelectorAll('[role]').forEach((el) => {
+    const r = el.getAttribute('role');
+    roles[r] = (roles[r] || 0) + 1;
+  });
+  out.roles = roles;
+
+  // 2. Most common data-* attributes (often platform-specific markers).
+  const dataAttrs = {};
+  const allEls = document.querySelectorAll('*');
+  for (const el of allEls) {
+    for (const attr of el.attributes) {
+      if (attr.name.startsWith('data-')) {
+        dataAttrs[attr.name] = (dataAttrs[attr.name] || 0) + 1;
+      }
+    }
+  }
+  out.dataAttrs = Object.entries(dataAttrs)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 30)
+    .reduce((m, [k, v]) => { m[k] = v; return m; }, {});
+
+  // 3. Repeating clusters: parents whose children share a tag/role/class
+  // signature — likely chat lists, message lists, post feeds.
+  const clusters = [];
+  document.querySelectorAll('*').forEach((parent) => {
+    const children = Array.from(parent.children || []);
+    if (children.length < 3) return;
+    const sigs = new Map();
+    for (const c of children) {
+      const cls = (typeof c.className === 'string' ? c.className : c.className?.baseVal || '')
+        .split(/\s+/).filter(Boolean).slice(0, 2).join('.');
+      const sig = c.tagName + '|' + (c.getAttribute('role') || '') + '|' + cls;
+      sigs.set(sig, (sigs.get(sig) || 0) + 1);
+    }
+    const dominant = [...sigs.entries()].sort((a, b) => b[1] - a[1])[0];
+    if (dominant && dominant[1] >= 3) {
+      const cls = (typeof parent.className === 'string' ? parent.className : '')
+        .split(/\s+/).filter(Boolean).slice(0, 3);
+      clusters.push({
+        parentTag: parent.tagName,
+        parentRole: parent.getAttribute('role') || null,
+        parentId: parent.id || null,
+        parentClasses: cls,
+        childPattern: dominant[0],
+        childCount: dominant[1],
+      });
+    }
+  });
+  out.clusters = clusters
+    .sort((a, b) => b.childCount - a.childCount)
+    .slice(0, 10);
+
+  // 4. Sample HTML of likely list/grid/main containers.
+  const candidates = [
+    '[role="list"]', '[role="grid"]', '[role="log"]',
+    '[role="main"] [role="row"]',
+    '[role="main"]', 'main', '#main', '#pane-side',
+    '[role="feed"]',
+  ];
+  out.samples = [];
+  for (const sel of candidates) {
+    const el = document.querySelector(sel);
+    if (el && !out.samples.some((s) => s.fullLength === el.outerHTML.length)) {
+      out.samples.push({
+        selector: sel,
+        fullLength: el.outerHTML.length,
+        snippet: el.outerHTML.slice(0, 1500),
+      });
+      if (out.samples.length >= 4) break;
+    }
+  }
+
+  // 5. CSS-class namespaces (msg-, message-, conversation-, post-, ...).
+  const classNamespaces = new Map();
+  for (const el of allEls) {
+    const cls = typeof el.className === 'string' ? el.className : '';
+    for (const c of cls.split(/\s+/)) {
+      if (!c) continue;
+      const m = c.match(/^([a-z]+[-_])/i);
+      if (m) classNamespaces.set(m[1], (classNamespaces.get(m[1]) || 0) + 1);
+    }
+  }
+  out.classNamespaces = [...classNamespaces.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 15)
+    .reduce((m, [k, v]) => { m[k] = v; return m; }, {});
+
+  return out;
+}
+// runs-in-tab:end
+
+/**
+ * Render a probe result as a Markdown report. Output is sized to paste
+ * into a GitHub issue or a Claude prompt for selector authoring.
+ */
+function buildInspectionMarkdown(probe) {
+  if (!probe || !probe.url) return '';
+  const lines = [];
+  lines.push(`# DOM inspection — ${probe.url}`);
+  lines.push(`captured: ${probe.timestamp}`);
+  lines.push(`title: ${probe.title}`);
+  lines.push('');
+
+  lines.push('## Roles in use');
+  const roles = Object.entries(probe.roles || {}).sort((a, b) => b[1] - a[1]);
+  for (const [r, n] of roles) lines.push(`- \`${r}\`: ${n}`);
+  lines.push('');
+
+  lines.push('## Common data-* attributes (top 30)');
+  for (const [k, v] of Object.entries(probe.dataAttrs || {})) {
+    lines.push(`- \`${k}\`: ${v}`);
+  }
+  lines.push('');
+
+  lines.push('## CSS class namespaces (top 15)');
+  for (const [k, v] of Object.entries(probe.classNamespaces || {})) {
+    lines.push(`- \`${k}*\`: ${v} elements`);
+  }
+  lines.push('');
+
+  lines.push('## Repeating clusters (likely lists/feeds)');
+  (probe.clusters || []).forEach((c, i) => {
+    const cls = c.parentClasses?.length ? '.' + c.parentClasses.join('.') : '';
+    const role = c.parentRole ? `[role="${c.parentRole}"]` : '';
+    const id = c.parentId ? `#${c.parentId}` : '';
+    lines.push(`${i + 1}. parent: \`<${c.parentTag.toLowerCase()}${id}${cls}${role}>\``);
+    lines.push(`   child pattern: \`${c.childPattern}\` (×${c.childCount})`);
+  });
+  lines.push('');
+
+  lines.push('## Sample HTML');
+  (probe.samples || []).forEach((s) => {
+    lines.push(`### \`${s.selector}\` (full length: ${s.fullLength})`);
+    lines.push('```html');
+    lines.push(s.snippet);
+    lines.push('```');
+    lines.push('');
+  });
+
+  lines.push('---');
+  lines.push('Generated by Chat Export plugin · paste this into a GitHub issue or share with the developer to add support for this site.');
+  return lines.join('\n');
 }
 
 // ── Settings ──
